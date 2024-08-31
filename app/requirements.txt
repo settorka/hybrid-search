@@ -1,0 +1,5 @@
+fastapi
+uvicorn
+elasticsearch[async]==7.14.0
+aioredis==2.0.0
+faker
