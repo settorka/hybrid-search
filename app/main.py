@@ -3,8 +3,9 @@ import json
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from pydantic import BaseModel, Field
 from elasticsearch import AsyncElasticsearch
-from typing import List
+from typing import List, Optional
 import aioredis
+from sentence_transformers import SentenceTransformer
 
 app = FastAPI()
 
@@ -17,10 +18,15 @@ es = AsyncElasticsearch([{'host': ES_HOST, 'port': ES_PORT}])
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379")
 redis = aioredis.from_url(REDIS_URL, encoding="utf-8", decode_responses=True)
 
+# Sentence transformer model
+model = SentenceTransformer("all-MiniLM-L6-v2")
+
 
 class SearchQuery(BaseModel):
     query: str
     top_k: int = Field(default=10, ge=1, le=100)
+    from_: int = Field(default=0, ge=0)
+    category: Optional[str] = None
 
 
 class SearchResult(BaseModel):
@@ -29,6 +35,8 @@ class SearchResult(BaseModel):
     author: str
     content: str
     score: float
+    category: str
+    updated_at: str
 
 
 async def update_search_stats(query: str):
@@ -36,42 +44,64 @@ async def update_search_stats(query: str):
     await redis.incr(f"search_stats:{query}")
 
 
+def extract_filters(query: str, category: Optional[str]):
+    filters = {}
+    if category:
+        filters["filter"] = [
+            {"term": {"category.keyword": {"value": category}}}]
+    return filters, query
+
+
+async def get_embedding(text: str):
+    return model.encode(text).tolist()
+
+
 @app.post("/search", response_model=List[SearchResult])
 async def hybrid_search(search_query: SearchQuery, background_tasks: BackgroundTasks):
     query = search_query.query
     top_k = search_query.top_k
+    from_ = search_query.from_
+    category = search_query.category
 
     # Check cache
-    cache_key = f"search:{query}:{top_k}"
+    cache_key = f"search:{query}:{top_k}:{from_}:{category}"
     cached_results = await redis.get(cache_key)
     if cached_results:
         return json.loads(cached_results)
 
-    # RRF query combining BM25 and ELSER
+    filters, parsed_query = extract_filters(query, category)
+
+    # Generate query vector
+    query_vector = await get_embedding(parsed_query)
+
+    # Construct the hybrid search query
     es_query = {
         "size": top_k,
+        "from": from_,
         "query": {
-            "rrf": {
-                "window_size": 50,
-                "rank_constant": 20,
-                "queries": [
+            "bool": {
+                "must": [
                     {
-                        "match": {
-                            "content": {
-                                "query": query,
-                                "boost": 1
-                            }
+                        "multi_match": {
+                            "query": parsed_query,
+                            "fields": ["title^2", "author", "content", "summary"],
+                            "type": "best_fields",
+                            "tie_breaker": 0.3
                         }
-                    },
+                    }
+                ],
+                "should": [
                     {
-                        "text_expansion": {
-                            "content_vector": {
-                                "model_id": ".elser_model_1",
-                                "model_text": query
+                        "script_score": {
+                            "query": {"match_all": {}},
+                            "script": {
+                                "source": "cosineSimilarity(params.query_vector, 'content_vector') + 1.0",
+                                "params": {"query_vector": query_vector}
                             }
                         }
                     }
-                ]
+                ],
+                "filter": filters.get("filter", [])
             }
         }
     }
@@ -84,14 +114,15 @@ async def hybrid_search(search_query: SearchQuery, background_tasks: BackgroundT
 
     results = []
     for hit in response['hits']['hits']:
-        # Fetch magazine info for each content hit
-        magazine_info = await es.get(index="magazine_info", id=hit['_source']['magazine_id'])
         results.append(SearchResult(
             id=hit['_id'],
-            title=magazine_info['_source']['title'],
-            author=magazine_info['_source']['author'],
-            content=hit['_source']['content'],
-            score=hit['_score']
+            title=hit['_source']['title'],
+            author=hit['_source']['author'],
+            content=hit['_source']['content'][:200] +
+            "...",  # Truncate content for preview
+            score=hit['_score'],
+            category=hit['_source']['category'],
+            updated_at=hit['_source']['updated_at']
         ))
 
     # Cache results

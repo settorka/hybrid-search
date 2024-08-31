@@ -3,9 +3,11 @@ import json
 import csv
 from elasticsearch_orm import ElasticsearchORM
 from create_magazine_indices import MAGAZINE_INFO_INDEX, MAGAZINE_CONTENT_INDEX
+from sentence_transformers import SentenceTransformer
 
-# Initialize ElasticsearchORM
+# Initialize ElasticsearchORM and SentenceTransformer
 es_orm = ElasticsearchORM()
+model = SentenceTransformer("all-MiniLM-L6-v2")
 
 
 def read_mock_data(file_path):
@@ -15,7 +17,6 @@ def read_mock_data(file_path):
     :return: List of dictionaries containing the mock data
     """
     file_extension = os.path.splitext(file_path)[1].lower()
-
     if file_extension == '.csv':
         with open(file_path, mode='r', encoding='utf-8') as file:
             reader = csv.DictReader(file)
@@ -43,11 +44,20 @@ def insert_mock_data(data):
             "publication_date": record["publication_date"],
             "category": record["category"]
         }
+
+        # Generate vector embedding for the content
+        content_vector = model.encode(record["content"]).tolist()
+
         magazine_content = {
             "id": idx,
             "magazine_id": idx,
+            "title": record["title"],
+            "author": record["author"],
             "content": record["content"],
-            "content_vector": []  # This should be populated with actual vector data
+            "summary": record.get("summary", ""),  # Add summary if available
+            "category": record["category"],
+            "updated_at": record.get("updated_at", record["publication_date"]),
+            "content_vector": content_vector
         }
 
         magazine_info_docs.append(magazine_info)
@@ -72,7 +82,6 @@ def insert_mock_data(data):
 if __name__ == "__main__":
     file_path = input(
         "Enter the path to the mock data file (CSV or JSON): ").strip()
-
     try:
         mock_data = read_mock_data(file_path)
         insert_mock_data(mock_data)

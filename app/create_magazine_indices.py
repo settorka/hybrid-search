@@ -20,9 +20,15 @@ MAGAZINE_CONTENT_MAPPINGS = {
     "properties": {
         "id": {"type": "integer"},
         "magazine_id": {"type": "integer"},
+        "title": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+        "author": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
         "content": {"type": "text"},
+        "summary": {"type": "text"},
+        "category": {"type": "keyword"},
+        "updated_at": {"type": "date"},
         "content_vector": {
-            "type": "sparse_vector"
+            "type": "dense_vector",
+            "dims": 384  # Dimensionality of the vector, adjust based on your model
         }
     }
 }
