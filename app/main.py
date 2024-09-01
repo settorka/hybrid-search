@@ -92,7 +92,7 @@ async def basic_search(query: str, top_k: int = 10, from_: int = 0):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Elasticsearch error: {str(e)}")
 
-async def full_text_search(query: str, top_k: int = 10, from_: int = 0):
+async def keyword_search(query: str, top_k: int = 10, from_: int = 0):
     try:
         es_query = {
             "size": top_k,
@@ -185,191 +185,178 @@ async def vector_search(query: str, top_k: int = 10, from_: int = 0):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Elasticsearch error: {str(e)}")
 
-async def hybrid_search(query: str, top_k: int = 10, from_: int = 0):
-    """Perform a hybrid search by combining full-text and vector search results."""
+def detect_phrase(query: str) -> bool:
+    """Detect if the query is a phrase (i.e., more than one word)."""
+    return len(query.split()) > 1
+async def hybrid_search(query: str, top_k: int = 10, from_: int = 0, keyword_weight: float = 0.7, vector_weight: float = 0.3, exact_match_boost: float = 2.0):
+    """Perform a hybrid search by combining full-text and vector search 
+    results with dynamic weighting and exact match boosting."""
     try:
         # Perform both searches concurrently
-        full_text_results, vector_results = await asyncio.gather(
-            full_text_search(query, top_k, from_),
-            vector_search(query, top_k, from_)
+        keyword_results, vector_results = await asyncio.gather(
+            keyword_search(query, top_k * 2, from_),
+            vector_search(query, top_k * 2, from_)
         )
+        
+        query_terms = query.lower().split()
+        
+        # Adjust weights based on query length
+        if len(query_terms) > 2:
+            keyword_weight = 0.8
+            vector_weight = 0.2
 
         # Create a dictionary to hold merged results
         combined_results = {}
 
-        # Weight factors
-        full_text_weight = 0.7
-        vector_weight = 0.3
-
-        # Process full-text results
-        for result in full_text_results:
-            if result.id not in combined_results:
-                combined_results[result.id] = result
-                combined_results[result.id].score *= full_text_weight
+        # Helper function to apply weights, boost, and term matching
+        def apply_weights_and_boost(result, weight, is_keyword):
+            if is_keyword:
+                # Preserve the original keyword search scoring
+                boosted_score = result.score * weight
+                # Additional boost for title and author matches
+                if any(term in result.title.lower() for term in query_terms):
+                    boosted_score *= 1.5
+                if any(term in result.author.lower() for term in query_terms):
+                    boosted_score *= 1.2
             else:
-                combined_results[result.id].score += result.score * full_text_weight
+                # For vector search, use the new scoring method
+                boosted_score = result.score * weight
+                matched_terms = sum(1 for term in query_terms if term in result.content.lower())
+                term_match_boost = 1 + (0.1 * matched_terms)
+                boosted_score *= term_match_boost
 
-        # Process vector results
+            # Apply exact match boost for both keyword and vector results
+            if query.lower() in result.title.lower() or query.lower() in result.content.lower():
+                boosted_score *= exact_match_boost
+            
+            return boosted_score
+
+        # Process keyword search results
+        for result in keyword_results:
+            if result.id not in combined_results:
+                result.score = apply_weights_and_boost(result, keyword_weight, is_keyword=True)
+                combined_results[result.id] = result
+            else:
+                combined_results[result.id].score += apply_weights_and_boost(result, keyword_weight, is_keyword=True)
+
+        # Process vector search results
         for result in vector_results:
             if result.id not in combined_results:
+                result.score = apply_weights_and_boost(result, vector_weight, is_keyword=False)
                 combined_results[result.id] = result
-                combined_results[result.id].score *= vector_weight
             else:
-                combined_results[result.id].score += result.score * vector_weight
-
+                combined_results[result.id].score += apply_weights_and_boost(result, vector_weight, is_keyword=False)
         # Convert combined results to a sorted list
         sorted_results = sorted(combined_results.values(), key=lambda x: x.score, reverse=True)
-
         # Return top_k results
         return sorted_results[:top_k]
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Hybrid search error: {str(e)}")
+# production - multinode cluster with GPUs 
+#indexes
+# async def chunk_vector_search(query: str, top_k: int = 10, from_: int = 0):
+#     query_vector = model.encode(query).tolist()
+#     es_query = {
+#         "query": {
+#             "nested": {
+#                 "path": "chunks",
+#                 "query": {
+#                     "script_score": {
+#                         "query": {"match_all": {}},
+#                         "script": {
+#                             "source": "cosineSimilarity(params.query_vector, doc['chunks.chunk_vector']) + 1.0",
+#                             "params": {"query_vector": query_vector}
+#                         }
+#                     }
+#                 }
+#             }
+#         },
+#         "size": top_k,
+#         "from": from_
+#     }
+#     response = await es.search(index=MAGAZINE_CONTENT_INDEX, body=es_query)
+#     return [SearchResult(
+#         id=hit['_source']['id'],
+#         title=hit['_source']['title'],
+#         author=hit['_source']['author'],
+#         content=hit['_source']['chunks'][0]['chunk_content'][:200] + "...",
+#         score=hit['_score'],
+#         category=hit['_source']['category'],
+#         updated_at=hit['_source']['updated_at']
+#     ) for hit in response['hits']['hits']]
 
-async def hybrid_search_rrf(query: str, top_k: int = 10, from_: int = 0, k: int = 60):
-    """Perform a hybrid search by combining full-text and vector search results using Reciprocal Rank Fusion (RRF)."""
-    try:
-        # Perform both searches concurrently
-        full_text_results, vector_results = await asyncio.gather(
-            full_text_search(query, top_k, from_),
-            vector_search(query, top_k, from_)
-        )
+# async def sentence_vector_search(query: str, top_k: int = 10, from_: int = 0):
+#     query_vector = model.encode(query).tolist()
+#     es_query = {
+#         "query": {
+#             "nested": {
+#                 "path": "sentences",
+#                 "query": {
+#                     "script_score": {
+#                         "query": {"match_all": {}},
+#                         "script": {
+#                             "source": "cosineSimilarity(params.query_vector, doc['sentences.sentence_vector']) + 1.0",
+#                             "params": {"query_vector": query_vector}
+#                         }
+#                     }
+#                 }
+#             }
+#         },
+#         "size": top_k,
+#         "from": from_
+#     }
+#     response = await es.search(index=MAGAZINE_CONTENT_INDEX, body=es_query)
+#     return [SearchResult(
+#         id=hit['_source']['id'],
+#         title=hit['_source']['title'],
+#         author=hit['_source']['author'],
+#         content=hit['_source']['sentences'][0]['sentence'],
+#         score=hit['_score'],
+#         category=hit['_source']['category'],
+#         updated_at=hit['_source']['updated_at']
+#     ) for hit in response['hits']['hits']]
 
-        # Create a dictionary to hold RRF scores
-        rrf_scores = {}
+# async def indexed_hybrid_search_rrf(query: str, top_k: int = 10, from_: int = 0, k: int = 60):
+#     """Perform an enhanced hybrid search using all available search methods."""
+#     try:
+#         keyword_results, vector_results, chunk_results, sentence_results, tfidf_results = await asyncio.gather(
+#             keyword_search(query, top_k, from_),
+#             vector_search(query, top_k, from_),
+#             chunk_vector_search(query, top_k, from_),
+#             sentence_vector_search(query, top_k, from_)
+#         )
 
-        # Helper function to add or update RRF score
-        def update_rrf_score(doc_id, rank):
-            if doc_id not in rrf_scores:
-                rrf_scores[doc_id] = 0.0
-            rrf_scores[doc_id] += 1.0 / (k + rank)
+#         # Create a dictionary to hold RRF scores
+#         rrf_scores = {}
 
-        # Update scores for full-text search results
-        for rank, result in enumerate(full_text_results, start=1):
-            update_rrf_score(result.id, rank)
+#         # Helper function to add or update RRF score
+#         def update_rrf_score(doc_id, rank):
+#             if doc_id not in rrf_scores:
+#                 rrf_scores[doc_id] = 0.0
+#             rrf_scores[doc_id] += 1.0 / (k + rank)
 
-        # Update scores for vector search results
-        for rank, result in enumerate(vector_results, start=1):
-            update_rrf_score(result.id, rank)
+#         # Update scores for all search results
+#         for result_set in [keyword_results, vector_results, chunk_results, sentence_results, tfidf_results]:
+#             for rank, result in enumerate(result_set, start=1):
+#                 update_rrf_score(result.id, rank)
 
-        # Combine results with their final RRF scores
-        combined_results = {}
-        for result in full_text_results + vector_results:
-            if result.id not in combined_results:
-                combined_results[result.id] = result
-            combined_results[result.id].score = rrf_scores[result.id]
+#         # Combine results with their final RRF scores
+#         combined_results = {}
+#         for result_set in [keyword_results, vector_results, chunk_results, sentence_results, tfidf_results]:
+#             for result in result_set:
+#                 if result.id not in combined_results:
+#                     combined_results[result.id] = result
+#                 combined_results[result.id].score = rrf_scores[result.id]
 
-        # Sort combined results by the new RRF scores in descending order
-        sorted_results = sorted(combined_results.values(), key=lambda x: x.score, reverse=True)
+#         # Sort combined results by the new RRF scores in descending order
+#         sorted_results = sorted(combined_results.values(), key=lambda x: x.score, reverse=True)
 
-        # Return top_k results
-        return sorted_results[:top_k]
+#         # Return top_k results
+#         return sorted_results[:top_k]
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Hybrid search RRF error: {str(e)}")
-
-async def chunk_vector_search(query: str, top_k: int = 10, from_: int = 0):
-    query_vector = model.encode(query).tolist()
-    es_query = {
-        "query": {
-            "nested": {
-                "path": "chunks",
-                "query": {
-                    "script_score": {
-                        "query": {"match_all": {}},
-                        "script": {
-                            "source": "cosineSimilarity(params.query_vector, doc['chunks.chunk_vector']) + 1.0",
-                            "params": {"query_vector": query_vector}
-                        }
-                    }
-                }
-            }
-        },
-        "size": top_k,
-        "from": from_
-    }
-    response = await es.search(index=MAGAZINE_CONTENT_INDEX, body=es_query)
-    return [SearchResult(
-        id=hit['_source']['id'],
-        title=hit['_source']['title'],
-        author=hit['_source']['author'],
-        content=hit['_source']['chunks'][0]['chunk_content'][:200] + "...",
-        score=hit['_score'],
-        category=hit['_source']['category'],
-        updated_at=hit['_source']['updated_at']
-    ) for hit in response['hits']['hits']]
-
-async def sentence_vector_search(query: str, top_k: int = 10, from_: int = 0):
-    query_vector = model.encode(query).tolist()
-    es_query = {
-        "query": {
-            "nested": {
-                "path": "sentences",
-                "query": {
-                    "script_score": {
-                        "query": {"match_all": {}},
-                        "script": {
-                            "source": "cosineSimilarity(params.query_vector, doc['sentences.sentence_vector']) + 1.0",
-                            "params": {"query_vector": query_vector}
-                        }
-                    }
-                }
-            }
-        },
-        "size": top_k,
-        "from": from_
-    }
-    response = await es.search(index=MAGAZINE_CONTENT_INDEX, body=es_query)
-    return [SearchResult(
-        id=hit['_source']['id'],
-        title=hit['_source']['title'],
-        author=hit['_source']['author'],
-        content=hit['_source']['sentences'][0]['sentence'],
-        score=hit['_score'],
-        category=hit['_source']['category'],
-        updated_at=hit['_source']['updated_at']
-    ) for hit in response['hits']['hits']]
-
-async def indexed_hybrid_search_rrf(query: str, top_k: int = 10, from_: int = 0, k: int = 60):
-    """Perform an enhanced hybrid search using all available search methods."""
-    try:
-        full_text_results, vector_results, chunk_results, sentence_results, tfidf_results = await asyncio.gather(
-            full_text_search(query, top_k, from_),
-            vector_search(query, top_k, from_),
-            chunk_vector_search(query, top_k, from_),
-            sentence_vector_search(query, top_k, from_)
-        )
-
-        # Create a dictionary to hold RRF scores
-        rrf_scores = {}
-
-        # Helper function to add or update RRF score
-        def update_rrf_score(doc_id, rank):
-            if doc_id not in rrf_scores:
-                rrf_scores[doc_id] = 0.0
-            rrf_scores[doc_id] += 1.0 / (k + rank)
-
-        # Update scores for all search results
-        for result_set in [full_text_results, vector_results, chunk_results, sentence_results, tfidf_results]:
-            for rank, result in enumerate(result_set, start=1):
-                update_rrf_score(result.id, rank)
-
-        # Combine results with their final RRF scores
-        combined_results = {}
-        for result_set in [full_text_results, vector_results, chunk_results, sentence_results, tfidf_results]:
-            for result in result_set:
-                if result.id not in combined_results:
-                    combined_results[result.id] = result
-                combined_results[result.id].score = rrf_scores[result.id]
-
-        # Sort combined results by the new RRF scores in descending order
-        sorted_results = sorted(combined_results.values(), key=lambda x: x.score, reverse=True)
-
-        # Return top_k results
-        return sorted_results[:top_k]
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Enhanced hybrid search RRF error: {str(e)}")
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f"Enhanced hybrid search RRF error: {str(e)}")
 
 async def cache_search_results(cache_key: str, results: List[SearchResult]):
     """Cache search results in Redis."""
@@ -398,10 +385,10 @@ async def search(search_query: SearchQuery):
         return cached_results
     
     # results = await basic_search(query, top_k, from_)
-    # results = await full_text_search(query, top_k, from_)
+    # results = await keyword_search(query, top_k, from_)
     # results = await vector_search(query, top_k, from_)
-    # results = await hybrid_search(query, top_k, from_)
-    results = await hybrid_search_rrf(query, top_k, from_)
+    results = await hybrid_search(query, top_k, from_)
+    # results = await hybrid_search_rrf(query, top_k, from_)
     # results = await indexed_hybrid_search_rrf(query, top_k, from_)   #multinode cluster
     # Cache the search results
     await cache_search_results(cache_key, results)
