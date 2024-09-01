@@ -313,7 +313,6 @@ async def search(search_query: SearchQuery):
 
 @app.on_event("startup")
 async def startup_event():
-    # Any startup events (if needed)
     pass
 
 
