@@ -37,7 +37,30 @@ MAGAZINE_CONTENT_MAPPINGS = {
         "content_vector": {
             "type": "dense_vector",
             "dims": 384  # Dimensionality of the vector
-        }
+        },
+        # production - multinode cluster / GPU
+        # "chunks": {
+        #     "type": "nested",
+        #     "properties": {
+        #         "chunk_id": {"type": "integer"},
+        #         "chunk_content": {"type": "text"},
+        #         "chunk_vector": {
+        #             "type": "dense_vector",
+        #             "dims": 384
+        #         }
+        #     }
+        # },
+        # "sentences": {
+        #     "type": "nested",
+        #     "properties": {
+        #         "sentence_id": {"type": "integer"},
+        #         "sentence": {"type": "text"},
+        #         "sentence_vector": {
+        #             "type": "dense_vector",
+        #             "dims": 384
+        #         }
+        #     }
+        # }
     }
 }
 

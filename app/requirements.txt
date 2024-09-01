@@ -6,3 +6,5 @@ sentence-transformers
 pydantic
 faker 
 asyncio
+numpy
+scikit-learn

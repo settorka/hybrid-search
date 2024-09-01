@@ -45,9 +45,6 @@ class SearchResult(BaseModel):
     category: str
     updated_at: str
 
-
-
-
 async def update_search_stats(query: str):
     """Background task to update search statistics in Redis."""
     await redis.incr(f"search_stats:{query}")
@@ -60,10 +57,8 @@ def extract_filters(query: str, category: Optional[str]):
             {"term": {"category.keyword": {"value": category}}}]
     return filters, query
 
-
 async def get_embedding(text: str):
     return model.encode(text).tolist()
-
 
 async def basic_search(query: str, top_k: int = 10, from_: int = 0):
     try:
@@ -273,6 +268,109 @@ async def hybrid_search_rrf(query: str, top_k: int = 10, from_: int = 0, k: int 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Hybrid search RRF error: {str(e)}")
 
+async def chunk_vector_search(query: str, top_k: int = 10, from_: int = 0):
+    query_vector = model.encode(query).tolist()
+    es_query = {
+        "query": {
+            "nested": {
+                "path": "chunks",
+                "query": {
+                    "script_score": {
+                        "query": {"match_all": {}},
+                        "script": {
+                            "source": "cosineSimilarity(params.query_vector, doc['chunks.chunk_vector']) + 1.0",
+                            "params": {"query_vector": query_vector}
+                        }
+                    }
+                }
+            }
+        },
+        "size": top_k,
+        "from": from_
+    }
+    response = await es.search(index=MAGAZINE_CONTENT_INDEX, body=es_query)
+    return [SearchResult(
+        id=hit['_source']['id'],
+        title=hit['_source']['title'],
+        author=hit['_source']['author'],
+        content=hit['_source']['chunks'][0]['chunk_content'][:200] + "...",
+        score=hit['_score'],
+        category=hit['_source']['category'],
+        updated_at=hit['_source']['updated_at']
+    ) for hit in response['hits']['hits']]
+
+async def sentence_vector_search(query: str, top_k: int = 10, from_: int = 0):
+    query_vector = model.encode(query).tolist()
+    es_query = {
+        "query": {
+            "nested": {
+                "path": "sentences",
+                "query": {
+                    "script_score": {
+                        "query": {"match_all": {}},
+                        "script": {
+                            "source": "cosineSimilarity(params.query_vector, doc['sentences.sentence_vector']) + 1.0",
+                            "params": {"query_vector": query_vector}
+                        }
+                    }
+                }
+            }
+        },
+        "size": top_k,
+        "from": from_
+    }
+    response = await es.search(index=MAGAZINE_CONTENT_INDEX, body=es_query)
+    return [SearchResult(
+        id=hit['_source']['id'],
+        title=hit['_source']['title'],
+        author=hit['_source']['author'],
+        content=hit['_source']['sentences'][0]['sentence'],
+        score=hit['_score'],
+        category=hit['_source']['category'],
+        updated_at=hit['_source']['updated_at']
+    ) for hit in response['hits']['hits']]
+
+async def indexed_hybrid_search_rrf(query: str, top_k: int = 10, from_: int = 0, k: int = 60):
+    """Perform an enhanced hybrid search using all available search methods."""
+    try:
+        full_text_results, vector_results, chunk_results, sentence_results, tfidf_results = await asyncio.gather(
+            full_text_search(query, top_k, from_),
+            vector_search(query, top_k, from_),
+            chunk_vector_search(query, top_k, from_),
+            sentence_vector_search(query, top_k, from_)
+        )
+
+        # Create a dictionary to hold RRF scores
+        rrf_scores = {}
+
+        # Helper function to add or update RRF score
+        def update_rrf_score(doc_id, rank):
+            if doc_id not in rrf_scores:
+                rrf_scores[doc_id] = 0.0
+            rrf_scores[doc_id] += 1.0 / (k + rank)
+
+        # Update scores for all search results
+        for result_set in [full_text_results, vector_results, chunk_results, sentence_results, tfidf_results]:
+            for rank, result in enumerate(result_set, start=1):
+                update_rrf_score(result.id, rank)
+
+        # Combine results with their final RRF scores
+        combined_results = {}
+        for result_set in [full_text_results, vector_results, chunk_results, sentence_results, tfidf_results]:
+            for result in result_set:
+                if result.id not in combined_results:
+                    combined_results[result.id] = result
+                combined_results[result.id].score = rrf_scores[result.id]
+
+        # Sort combined results by the new RRF scores in descending order
+        sorted_results = sorted(combined_results.values(), key=lambda x: x.score, reverse=True)
+
+        # Return top_k results
+        return sorted_results[:top_k]
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Enhanced hybrid search RRF error: {str(e)}")
+
 async def cache_search_results(cache_key: str, results: List[SearchResult]):
     """Cache search results in Redis."""
     # Serialize the search results to JSON and set them in Redis with a TTL
@@ -304,7 +402,7 @@ async def search(search_query: SearchQuery):
     # results = await vector_search(query, top_k, from_)
     # results = await hybrid_search(query, top_k, from_)
     results = await hybrid_search_rrf(query, top_k, from_)
-    
+    # results = await indexed_hybrid_search_rrf(query, top_k, from_)   #multinode cluster
     # Cache the search results
     await cache_search_results(cache_key, results)
     
