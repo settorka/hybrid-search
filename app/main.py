@@ -1,3 +1,4 @@
+import uvicorn
 import os
 import json, asyncio
 from fastapi import FastAPI, HTTPException, BackgroundTasks
@@ -322,5 +323,4 @@ async def shutdown_event():
     await redis.close()
 
 if __name__ == "__main__":
-    import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
