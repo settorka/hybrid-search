@@ -1,9 +1,16 @@
 from elasticsearch_orm import ElasticsearchORM
+import os
+
+# Ensure environment variables are set
+os.environ.setdefault("ES_HOST", "elasticsearch")
+os.environ.setdefault("ES_PORT", "9200")
+os.environ.setdefault("ES_SCHEME", "http")
+
 
 # Initialize ElasticsearchORM
 es_orm = ElasticsearchORM()
 
-# Define your data models here
+# Data models
 MAGAZINE_INFO_INDEX = "magazine_info"
 MAGAZINE_INFO_MAPPINGS = {
     "properties": {
@@ -11,6 +18,7 @@ MAGAZINE_INFO_MAPPINGS = {
         "title": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
         "author": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
         "publication_date": {"type": "date"},
+        "content": {"type": "text"},
         "category": {"type": "keyword"}
     }
 }
@@ -28,7 +36,7 @@ MAGAZINE_CONTENT_MAPPINGS = {
         "updated_at": {"type": "date"},
         "content_vector": {
             "type": "dense_vector",
-            "dims": 384  # Dimensionality of the vector, adjust based on your model
+            "dims": 384  # Dimensionality of the vector
         }
     }
 }

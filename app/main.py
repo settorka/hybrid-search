@@ -1,5 +1,5 @@
 import os
-import json
+import json, asyncio
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from pydantic import BaseModel, Field
 from elasticsearch import AsyncElasticsearch
@@ -12,7 +12,9 @@ app = FastAPI()
 # Elasticsearch connection
 ES_HOST = os.getenv("ES_HOST", "elasticsearch")
 ES_PORT = int(os.getenv("ES_PORT", 9200))
-es = AsyncElasticsearch([{'host': ES_HOST, 'port': ES_PORT}])
+ES_SCHEME = os.getenv("ES_SCHEME", "http")
+
+es = AsyncElasticsearch([f"{ES_SCHEME}://{ES_HOST}:{ES_PORT}"])
 
 # Redis connection
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379")
@@ -21,6 +23,8 @@ redis = aioredis.from_url(REDIS_URL, encoding="utf-8", decode_responses=True)
 # Sentence transformer model
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
+MAGAZINE_INFO_INDEX = "magazine_info"
+MAGAZINE_CONTENT_INDEX = "magazine_content"
 
 class SearchQuery(BaseModel):
     query: str
@@ -30,13 +34,15 @@ class SearchQuery(BaseModel):
 
 
 class SearchResult(BaseModel):
-    id: str
+    id: int
     title: str
     author: str
     content: str
     score: float
     category: str
     updated_at: str
+
+
 
 
 async def update_search_stats(query: str):
@@ -56,81 +62,225 @@ async def get_embedding(text: str):
     return model.encode(text).tolist()
 
 
+async def basic_search(query: str, top_k: int = 10, from_: int = 0):
+    try:
+        es_query = {
+            "size": top_k,
+            "from": from_,
+            "query": {
+                "multi_match": {
+                    "query": query,
+                    "fields": ["title", "author", "content"]
+                }
+            }
+        }
+        
+        response = await es.search(index="magazine_info", body=es_query)
+        
+        results = []
+        for hit in response['hits']['hits']:
+            results.append(SearchResult(
+                id=hit['_id'],
+                title=hit['_source'].get('title', ''),
+                author=hit['_source'].get('author', ''),
+                content=hit['_source'].get('content', '')[:200] + "...",  # Truncate content for preview
+                score=hit['_score'],
+                category=hit['_source'].get('category', ''),
+                updated_at=hit['_source'].get('updated_at', '')
+            ))
+        
+        return results
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Elasticsearch error: {str(e)}")
+
+async def full_text_search(query: str, top_k: int = 10, from_: int = 0):
+    try:
+        es_query = {
+            "size": top_k,
+            "from": from_,
+            "query": {
+                "multi_match": {
+                    "query": query,
+                    "fields": ["title^2", "author", "content"],
+                    "type": "best_fields",
+                    "fuzziness": "AUTO",
+                    "prefix_length": 2,
+                    "minimum_should_match": "75%"
+                }
+            },
+            "highlight": {
+                "fields": {
+                    "title": {},
+                    "author": {},
+                    "content": {"fragment_size": 150, "number_of_fragments": 1}
+                }
+            }
+        }
+
+        response = await es.search(index=MAGAZINE_INFO_INDEX, body=es_query)
+        
+        results = []
+        for hit in response['hits']['hits']:
+            source = hit['_source']
+            highlight = hit.get('highlight', {})
+            results.append(SearchResult(
+                id=hit['_id'],
+                title=highlight.get('title', [source['title']])[0],
+                author=highlight.get('author', [source['author']])[0],
+                content=highlight.get('content', [source['content'][:150] + "..."])[0],
+                score=hit['_score'],
+                category=source.get('category', ''),
+                updated_at=source.get('updated_at', '')
+            ))
+        
+        return results
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Elasticsearch error: {str(e)}")
+
+async def vector_search(query: str, top_k: int = 10, from_: int = 0):
+    try:
+        # Generate embedding for the query
+        query_vector = model.encode(query).tolist()
+
+        es_query = {
+            "query": {
+                "script_score": {
+                    "query": {"match_all": {}},
+                    "script": {
+                        "source": "cosineSimilarity(params.query_vector, 'content_vector') + 1.0",
+                        "params": {"query_vector": query_vector}
+                    }
+                }
+            },
+            "size": top_k,
+            "from": from_,
+            "_source": ["id", "title", "author", "content", "category", "updated_at"],
+            "highlight": {
+                "fields": {
+                    "title": {},
+                    "author": {},
+                    "content": {"fragment_size": 150, "number_of_fragments": 1}
+                }
+            }
+        }
+
+        response = await es.search(index=MAGAZINE_CONTENT_INDEX, body=es_query)
+        
+        results = []
+        for hit in response['hits']['hits']:
+            source = hit['_source']
+            highlight = hit.get('highlight', {})
+            results.append(SearchResult(
+                id=source['id'],
+                title=highlight.get('title', [source['title']])[0],
+                author=highlight.get('author', [source['author']])[0],
+                content=highlight.get('content', [source['content'][:150] + "..."])[0],
+                score=hit['_score'],
+                category=source.get('category', ''),
+                updated_at=source.get('updated_at', '')
+            ))
+        
+        return results
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Elasticsearch error: {str(e)}")
+
+async def hybrid_search(query: str, top_k: int = 10, from_: int = 0):
+    """Perform a hybrid search by combining full-text and vector search results."""
+    try:
+        # Perform both searches concurrently
+        full_text_results, vector_results = await asyncio.gather(
+            full_text_search(query, top_k, from_),
+            vector_search(query, top_k, from_)
+        )
+
+        # Create a dictionary to hold merged results
+        combined_results = {}
+
+        # Weight factors
+        full_text_weight = 0.7
+        vector_weight = 0.3
+
+        # Process full-text results
+        for result in full_text_results:
+            if result.id not in combined_results:
+                combined_results[result.id] = result
+                combined_results[result.id].score *= full_text_weight
+            else:
+                combined_results[result.id].score += result.score * full_text_weight
+
+        # Process vector results
+        for result in vector_results:
+            if result.id not in combined_results:
+                combined_results[result.id] = result
+                combined_results[result.id].score *= vector_weight
+            else:
+                combined_results[result.id].score += result.score * vector_weight
+
+        # Convert combined results to a sorted list
+        sorted_results = sorted(combined_results.values(), key=lambda x: x.score, reverse=True)
+
+        # Return top_k results
+        return sorted_results[:top_k]
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Hybrid search error: {str(e)}")
+
+async def hybrid_search_rrf(query: str, top_k: int = 10, from_: int = 0, k: int = 60):
+    """Perform a hybrid search by combining full-text and vector search results using Reciprocal Rank Fusion (RRF)."""
+    try:
+        # Perform both searches concurrently
+        full_text_results, vector_results = await asyncio.gather(
+            full_text_search(query, top_k, from_),
+            vector_search(query, top_k, from_)
+        )
+
+        # Create a dictionary to hold RRF scores
+        rrf_scores = {}
+
+        # Helper function to add or update RRF score
+        def update_rrf_score(doc_id, rank):
+            if doc_id not in rrf_scores:
+                rrf_scores[doc_id] = 0.0
+            rrf_scores[doc_id] += 1.0 / (k + rank)
+
+        # Update scores for full-text search results
+        for rank, result in enumerate(full_text_results, start=1):
+            update_rrf_score(result.id, rank)
+
+        # Update scores for vector search results
+        for rank, result in enumerate(vector_results, start=1):
+            update_rrf_score(result.id, rank)
+
+        # Combine results with their final RRF scores
+        combined_results = {}
+        for result in full_text_results + vector_results:
+            if result.id not in combined_results:
+                combined_results[result.id] = result
+            combined_results[result.id].score = rrf_scores[result.id]
+
+        # Sort combined results by the new RRF scores in descending order
+        sorted_results = sorted(combined_results.values(), key=lambda x: x.score, reverse=True)
+
+        # Return top_k results
+        return sorted_results[:top_k]
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Hybrid search RRF error: {str(e)}")
+
 @app.post("/search", response_model=List[SearchResult])
-async def hybrid_search(search_query: SearchQuery, background_tasks: BackgroundTasks):
+async def search(search_query: SearchQuery):
     query = search_query.query
     top_k = search_query.top_k
     from_ = search_query.from_
-    category = search_query.category
 
-    # Check cache
-    cache_key = f"search:{query}:{top_k}:{from_}:{category}"
-    cached_results = await redis.get(cache_key)
-    if cached_results:
-        return json.loads(cached_results)
-
-    filters, parsed_query = extract_filters(query, category)
-
-    # Generate query vector
-    query_vector = await get_embedding(parsed_query)
-
-    # Construct the hybrid search query
-    es_query = {
-        "size": top_k,
-        "from": from_,
-        "query": {
-            "bool": {
-                "must": [
-                    {
-                        "multi_match": {
-                            "query": parsed_query,
-                            "fields": ["title^2", "author", "content", "summary"],
-                            "type": "best_fields",
-                            "tie_breaker": 0.3
-                        }
-                    }
-                ],
-                "should": [
-                    {
-                        "script_score": {
-                            "query": {"match_all": {}},
-                            "script": {
-                                "source": "cosineSimilarity(params.query_vector, 'content_vector') + 1.0",
-                                "params": {"query_vector": query_vector}
-                            }
-                        }
-                    }
-                ],
-                "filter": filters.get("filter", [])
-            }
-        }
-    }
-
-    try:
-        response = await es.search(index="magazine_content", body=es_query)
-    except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Elasticsearch error: {str(e)}")
-
-    results = []
-    for hit in response['hits']['hits']:
-        results.append(SearchResult(
-            id=hit['_id'],
-            title=hit['_source']['title'],
-            author=hit['_source']['author'],
-            content=hit['_source']['content'][:200] +
-            "...",  # Truncate content for preview
-            score=hit['_score'],
-            category=hit['_source']['category'],
-            updated_at=hit['_source']['updated_at']
-        ))
-
-    # Cache results
-    await redis.setex(cache_key, 3600, json.dumps([result.dict() for result in results]))
-
-    # Update search stats in the background
-    background_tasks.add_task(update_search_stats, query)
-
+    # results = await basic_search(query, top_k, from_)
+    # results = await full_text_search(query, top_k, from_)
+    # results = await vector_search(query, top_k, from_)
+    # results = await hybrid_search(query, top_k, from_)
+    results = await hybrid_search_rrf(query, top_k, from_)
     return results
 
 

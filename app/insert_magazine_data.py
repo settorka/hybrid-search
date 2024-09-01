@@ -42,6 +42,7 @@ def insert_mock_data(data):
             "title": record["title"],
             "author": record["author"],
             "publication_date": record["publication_date"],
+            "content": record["content"],
             "category": record["category"]
         }
 

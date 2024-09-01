@@ -8,7 +8,8 @@ class ElasticsearchORM:
     def __init__(self):
         ES_HOST = os.getenv("ES_HOST", "elasticsearch")
         ES_PORT = int(os.getenv("ES_PORT", 9200))
-        self.es = Elasticsearch([{'host': ES_HOST, 'port': ES_PORT}])
+        ES_SCHEME = os.getenv("ES_SCHEME", "http")
+        self.es = Elasticsearch([f"{ES_SCHEME}://{ES_HOST}:{ES_PORT}"])
 
     def create_index(self, index_name: str, mappings: Dict[str, Any]):
         """Create an index with the given mappings."""
