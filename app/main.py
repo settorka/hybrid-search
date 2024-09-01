@@ -25,6 +25,8 @@ model = SentenceTransformer("all-MiniLM-L6-v2")
 
 MAGAZINE_INFO_INDEX = "magazine_info"
 MAGAZINE_CONTENT_INDEX = "magazine_content"
+# TTL for caching search results in seconds (e.g., cache results for 1 hour)
+CACHE_TTL = 3600
 
 class SearchQuery(BaseModel):
     query: str
@@ -270,17 +272,41 @@ async def hybrid_search_rrf(query: str, top_k: int = 10, from_: int = 0, k: int 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Hybrid search RRF error: {str(e)}")
 
+async def cache_search_results(cache_key: str, results: List[SearchResult]):
+    """Cache search results in Redis."""
+    # Serialize the search results to JSON and set them in Redis with a TTL
+    await redis.set(cache_key, json.dumps([result.dict() for result in results]), ex=CACHE_TTL)
+
+async def get_cached_results(cache_key: str):
+    """Retrieve cached search results from Redis."""
+    cached_results = await redis.get(cache_key)
+    if cached_results:
+        return [SearchResult(**item) for item in json.loads(cached_results)]
+    return None
+
 @app.post("/search", response_model=List[SearchResult])
 async def search(search_query: SearchQuery):
     query = search_query.query
     top_k = search_query.top_k
     from_ = search_query.from_
+    
+    # Generate a unique cache key for the search query and parameters
+    cache_key = f"search:{query}:{top_k}:{from_}"
 
+    # Check if the search results are already cached
+    cached_results = await get_cached_results(cache_key)
+    if cached_results:
+        return cached_results
+    
     # results = await basic_search(query, top_k, from_)
     # results = await full_text_search(query, top_k, from_)
     # results = await vector_search(query, top_k, from_)
     # results = await hybrid_search(query, top_k, from_)
     results = await hybrid_search_rrf(query, top_k, from_)
+    
+    # Cache the search results
+    await cache_search_results(cache_key, results)
+    
     return results
 
 
