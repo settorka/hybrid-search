@@ -1,8 +1,10 @@
+# Adapted from: 
+# https://github.com/elastic/elasticsearch-labs/blob/main/example-apps/search-tutorial/v2/search-tutorial/search.py
+
 import os
 from elasticsearch import Elasticsearch
 from elasticsearch.helpers import bulk
 from typing import List, Dict, Any
-
 
 class ElasticsearchORM:
     def __init__(self):
