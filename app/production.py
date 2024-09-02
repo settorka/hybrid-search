@@ -328,6 +328,111 @@ async def hybrid_search(query: str, top_k: int = 10, from_: int = 0, keyword_wei
         # Error handling
         raise HTTPException(status_code=500, detail=f"Hybrid search error: {str(e)}")
     
+# production - multinode cluster with GPUs 
+# indexes
+async def chunk_vector_search(query: str, top_k: int = 10, from_: int = 0):
+    query_vector = model.encode(query).tolist()
+    es_query = {
+        "query": {
+            "nested": {
+                "path": "chunks",
+                "query": {
+                    "script_score": {
+                        "query": {"match_all": {}},
+                        "script": {
+                            "source": "cosineSimilarity(params.query_vector, doc['chunks.chunk_vector']) + 1.0",
+                            "params": {"query_vector": query_vector}
+                        }
+                    }
+                }
+            }
+        },
+        "size": top_k,
+        "from": from_
+    }
+    response = await es.search(index=MAGAZINE_CONTENT_INDEX, body=es_query)
+    return [SearchResult(
+        id=hit['_source']['id'],
+        title=hit['_source']['title'],
+        author=hit['_source']['author'],
+        content=hit['_source']['chunks'][0]['chunk_content'][:200] + "...",
+        score=hit['_score'],
+        category=hit['_source']['category'],
+        updated_at=hit['_source']['updated_at']
+    ) for hit in response['hits']['hits']]
+
+async def sentence_vector_search(query: str, top_k: int = 10, from_: int = 0):
+    query_vector = model.encode(query).tolist()
+    es_query = {
+        "query": {
+            "nested": {
+                "path": "sentences",
+                "query": {
+                    "script_score": {
+                        "query": {"match_all": {}},
+                        "script": {
+                            "source": "cosineSimilarity(params.query_vector, doc['sentences.sentence_vector']) + 1.0",
+                            "params": {"query_vector": query_vector}
+                        }
+                    }
+                }
+            }
+        },
+        "size": top_k,
+        "from": from_
+    }
+    response = await es.search(index=MAGAZINE_CONTENT_INDEX, body=es_query)
+    return [SearchResult(
+        id=hit['_source']['id'],
+        title=hit['_source']['title'],
+        author=hit['_source']['author'],
+        content=hit['_source']['sentences'][0]['sentence'],
+        score=hit['_score'],
+        category=hit['_source']['category'],
+        updated_at=hit['_source']['updated_at']
+    ) for hit in response['hits']['hits']]
+
+async def indexed_hybrid_search_rrf(query: str, top_k: int = 10, from_: int = 0, k: int = 60):
+    """Perform an enhanced hybrid search using all available search methods."""
+    try:
+        keyword_results, vector_results, chunk_results, sentence_results, tfidf_results = await asyncio.gather(
+            keyword_search(query, top_k, from_),
+            vector_search(query, top_k, from_),
+            chunk_vector_search(query, top_k, from_),
+            sentence_vector_search(query, top_k, from_)
+        )
+
+        # Create a dictionary to hold RRF scores
+        rrf_scores = {}
+
+        # Helper function to add or update RRF score
+        def update_rrf_score(doc_id, rank):
+            if doc_id not in rrf_scores:
+                rrf_scores[doc_id] = 0.0
+            rrf_scores[doc_id] += 1.0 / (k + rank)
+
+        # Update scores for all search results
+        for result_set in [keyword_results, vector_results, chunk_results, sentence_results, tfidf_results]:
+            for rank, result in enumerate(result_set, start=1):
+                update_rrf_score(result.id, rank)
+
+        # Combine results with their final RRF scores
+        combined_results = {}
+        for result_set in [keyword_results, vector_results, chunk_results, sentence_results, tfidf_results]:
+            for result in result_set:
+                if result.id not in combined_results:
+                    combined_results[result.id] = result
+                combined_results[result.id].score = rrf_scores[result.id]
+
+        # Sort combined results by the new RRF scores in descending order
+        sorted_results = sorted(combined_results.values(), key=lambda x: x.score, reverse=True)
+
+        # Return top_k results
+        return sorted_results[:top_k]
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Enhanced hybrid search RRF error: {str(e)}")
+
 async def cache_search_results(cache_key: str, results: List[SearchResult]):
     """Cache search results in Redis."""
     # Serialize the search results to JSON and set them in Redis with a TTL
@@ -342,113 +447,36 @@ async def get_cached_results(cache_key: str):
 
 @app.post("/search", response_model=List[SearchResult])
 async def search(search_query: SearchQuery):
-    """
-    Executes an asynchronous, cached hybrid search for magazine articles.
-
-    Sequence flow:
-    1. Extracts search parameters from the SearchQuery object.
-    2. Generates a unique cache key based on the query and pagination parameters.
-    3. Attempts to retrieve cached results using a lazy loading strategy.
-    4. If cache miss occurs, performs an asynchronous hybrid search on the magazine index.
-    5. Caches the fresh search results for future queries.
-    6. Returns the search results as a list of SearchResult objects.
-
-    Parameters:
-    - search_query (SearchQuery): Contains:
-      - query (str): The search terms for finding relevant magazine articles.
-      - top_k (int): Number of results to return (default: 10, range: 1-100).
-      - from_ (int): Starting offset for pagination (default: 0).
-
-    Returns:
-    - List[SearchResult]: A list of magazine article search results, each containing:
-      id, title, author, content snippet, relevance score, category, and last updated timestamp.
-
-    Asynchronous Operations:
-    - get_cached_results(): Asynchronously checks for cached results in memory and Redis.
-    - hybrid_search(): Asynchronously performs a combined keyword and vector search on the
-      magazine article index, leveraging Elasticsearch's async parallel processing capabilities.
-    - cache_search_results(): Asynchronously stores results in the caching system for future use.
-
-    Note: The hybrid_search can be replaced with keyword_search or vector_search by
-    uncommenting the respective lines, allowing for flexible search strategy selection.
-    """
-    # Extracts search parameters from the SearchQuery object
-    query, top_k, from_ = search_query.query, search_query.top_k, search_query.from_
+    query = search_query.query
+    top_k = search_query.top_k
+    from_ = search_query.from_
     
-    # Generates a unique cache key for the query and pagination parameters
+    # Generate a unique cache key for the search query and parameters
     cache_key = f"search:{query}:{top_k}:{from_}"
 
-    # Checks if the results for this query are already cached to 
-    # avoid redundant searches and speed up response times
+    # Check if the search results are already cached
     cached_results = await get_cached_results(cache_key)
-    
-    # If cache hit, return the cached results immediately
     if cached_results:
         return cached_results
     
-    # If cache miss, perform a hybrid search to get fresh results
-    # Hybrid search combines keyword and vector searches 
-    # as specified in its function definition to improve result relevance
-    results = await hybrid_search(query, top_k, from_)
-
-    # Cache the fresh results for future queries to 
-    # improve performance and reduce load
+    # results = await keyword_search(query, top_k, from_)
+    # results = await vector_search(query, top_k, from_)
+    # results = await hybrid_search(query, top_k, from_)
+    results = await indexed_hybrid_search_rrf(query, top_k, from_)   #multinode cluster
+    # Cache the search results
     await cache_search_results(cache_key, results)
-    
-    # Return the search results as 
-    # a list of SearchResult objects
     return results
+
 
 @app.on_event("startup")
 async def startup_event():
-    """
-    Function to execute tasks during the startup phase of the application.
-
-    Purpose:
-    - Initializes resources needed throughout the application's lifecycle.
-
-    Commented Code:
-    - `app.state.model = SentenceTransformer("all-MiniLM-L6-v2")`
-      This would load the "all-MiniLM-L6-v2" model from the SentenceTransformers library 
-      into the application's state, making it available across different endpoints.
-
-    Note:
-    - Uncomment the line if you want the model to be loaded at startup.
-    Ensure you have sufficient memory and processing power; 
-    loading large models can be resource-intensive.
-    """
-    # Load resources or initialize components needed by the app
-    # Uncomment the following line if the model is required to be loaded during startup
     # app.state.model = SentenceTransformer("all-MiniLM-L6-v2")
     pass
-
+   
 @app.on_event("shutdown")
 async def shutdown_event():
-    """
-    Function to execute tasks during the shutdown phase of the application.
-
-    Purpose:
-    - Gracefully closes any open connections or resources to prevent memory leaks
-      and ensure a clean shutdown of the application.
-
-    Asynchronous Operations:
-    - `es.close()`: Closes the Elasticsearch client connection.
-    - `redis.close()`: Closes the Redis client connection.
-
-    """
-    # Closes any open connections or resources
-    await es.close()  # Close the Elasticsearch client
-    await redis.close()  # Close the Redis client
+    await es.close()
+    await redis.close()
 
 if __name__ == "__main__":
-    """
-    The main block to run the Hybrid Search API using Uvicorn.
-
-    Configurations:
-    - `host="0.0.0.0"`: The server will listen on all available IP addresses.
-    - `port=8000`: The server will be accessible on port 8000.
-    
-    - Running this script will start the server, making it accessible at 
-      http://localhost:8000 or the server's IP address.
-    """
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=7000)
