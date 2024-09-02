@@ -95,6 +95,53 @@ Array of search results:
 ```
 - Send request
 
+## Production Testing
+
+Under `api-tests` and `distributed`, there are four types of tests designed to evaluate the magazine search API's performance and reliability in a production-like environment. 
+These tests should be run when the application is load balanced across multiple nodes (e.g., using NGINX) to simulate real-world traffic distribution.
+
+### Test Types and Commands
+
+1. **Spike Test**: Simulates sudden, extreme load.
+   ```bash
+   locust -f locustfile.py --headless -u 1000 -r 1000 --run-time 1m
+   ```
+
+2. **Stress Test**: Gradually increases load to find breaking point.
+   ```bash
+   locust -f locustfile.py --headless -u 5000 -r 100 --run-time 30m
+   ```
+
+3. **Soak Test**: Evaluates stability over extended periods.
+   ```bash
+   locust -f locustfile.py --headless -u 200 -r 10 --run-time 48h
+   ```
+
+4. **Load Test**: Assesses performance under expected peak load.
+   ```bash
+   locust -f locustfile.py --headless -u 500 -r 50 --run-time 1h
+   ```
+
+### Running the Tests
+
+1. Ensure Locust is installed:
+   ```bash
+   pip install locust
+   ```
+
+2. Prepare your `locustfile.py` with appropriate user behavior definitions.
+
+3. Execute each test using the provided commands in a terminal.
+
+### Key Parameters
+
+- `-u`: Total number of users to simulate
+- `-r`: Rate at which new users are spawned
+- `--run-time`: Duration of the test
+- `--headless`: Runs Locust without the web UI
+
+Adjust user numbers and test durations based on production capacity and expected traffic patterns.
+
 ## Core Components
 
 ### FastAPI Application

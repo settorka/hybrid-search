@@ -1,3 +1,5 @@
+# Soak testing checks the system's stability and performance over an extended period under moderate load. 
+# This test will simulate a constant moderate load for several hours.
 from locust import HttpUser, TaskSet, task, constant_pacing
 from faker import Faker
 import random

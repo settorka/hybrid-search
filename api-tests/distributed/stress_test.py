@@ -1,4 +1,7 @@
-# locust_stress_test.py
+# Stress testing pushes the system beyond its capacity limits to determine the breaking point 
+# and monitor how it fails (gracefully or catastrophically).
+# run when the api is load balanced in a test or production env 
+
 from locust import HttpUser, TaskSet, task, between
 from faker import Faker
 import random

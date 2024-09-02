@@ -1,4 +1,7 @@
-# locust_spike_test.py
+# Spike testing evaluates how the system handles sudden bursts of load. 
+# It starts with a normal load and then introduces a sudden spike.
+# run in a test or production env (load balanced)
+# 
 from locust import HttpUser, TaskSet, task, between
 from faker import Faker
 import random
