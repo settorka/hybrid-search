@@ -173,7 +173,7 @@ Indexing speed: ~1000 documents per second
 Cache hit ratio: ~70% (depends on query patterns)
 
 ## Areas for Future Optimization
-- Adaptive Caching: Implement intelligent cache TTL based on query popularity.
+ity ity ittitiwwwwwwwnxnxnxnx- Adaptive Caching: Implement intelligent cache TTL based on query popularity.
 - Distributed Vector Operations: Implement distributed vector search for improved scalability.
 - Real-time Index Updates: Develop a strategy for real-time or near-real-time index updates across distributed architecture
 

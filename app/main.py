@@ -22,7 +22,7 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379")
 redis = aioredis.from_url(REDIS_URL, encoding="utf-8", decode_responses=True)
 
 # Sentence transformer model
-# model = SentenceTransformer("all-MiniLM-L6-v2")
+model = SentenceTransformer("all-MiniLM-L6-v2")
 
 MAGAZINE_INFO_INDEX = "magazine_info"
 MAGAZINE_CONTENT_INDEX = "magazine_content"
@@ -58,7 +58,6 @@ def extract_filters(query: str, category: Optional[str]):
     return filters, query
 
 async def get_embedding(text: str):
-    model = Request.app.state.model
     return model.encode(text).tolist()
 
 async def keyword_search(query: str, top_k: int = 10, from_: int = 0):
@@ -108,7 +107,7 @@ async def keyword_search(query: str, top_k: int = 10, from_: int = 0):
 
 async def vector_search(query: str, top_k: int = 10, from_: int = 0):
     try:
-        model = Request.app.state.model
+        # model = Request.app.state.model
         # Generate embedding for the query
         query_vector = model.encode(query).tolist()
 
@@ -362,7 +361,8 @@ async def search(search_query: SearchQuery):
 
 @app.on_event("startup")
 async def startup_event():
-    app.state.model = SentenceTransformer("all-MiniLM-L6-v2")
+    # app.state.model = SentenceTransformer("all-MiniLM-L6-v2")
+    pass
    
 @app.on_event("shutdown")
 async def shutdown_event():
