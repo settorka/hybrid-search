@@ -1,8 +1,35 @@
 # Hybrid Search API - Magazine Articles 
 
-## Architecture Overview
-
+##  Overview
 The Magazine Search API is built using FastAPI and integrates with Elasticsearch for search functionality and Redis for result caching. It employs a hybrid search approach, combining traditional keyword search with vector-based semantic search.
+
+### Project Structure
+After unzipping the project folder, you should see the following structure:
+```sh
+hybrid-search/
+- Dockerfile
+- Readme.md
+- docker-compose.yml
+- app/
+    - create_magazine_indices.py
+    - create_mock_magazine_data.py
+    - elasticsearch_orm.py
+    - insert_magazine_data.py
+    - main.py
+    - requirements.txt
+```
+
+### Key Files
+```yaml
+- Dockerfile: Defines the container for the FastAPI application
+- docker-compose.yml: Orchestrates the services (FastAPI, Elasticsearch, Redis)
+- app/main.py: Contains the main FastAPI application and search logic
+- app/create_magazine_indices.py: Creates necessary Elasticsearch indices
+- app/create_mock_magazine_data.py: Generates mock magazine data for n records
+- app/insert_magazine_data.py: Inserts mock data into Elasticsearch
+- app/elasticsearch_orm.py: Defines Elasticsearch mappings and models
+- app/requirements.txt: Lists Python dependencies
+```
 
 ## Deployment
 
@@ -25,20 +52,20 @@ This sets up a Docker environment with FastAPI, Elasticsearch, and Redis contain
 - Headers: Content-Type: application/json
 
 ### Request Body
-'''yaml
+```yaml
 {
   "query": "string",
   "top_k": integer,
   "from_": integer,
   "category": "string (optional)"
 }
-'''
+```
 ### Response Body
 
 Array of search results:
 
 
-'''yaml
+```yaml
 [
   {
     "id": integer,
@@ -49,10 +76,9 @@ Array of search results:
     "category": "string",
     "updated_at": "string"
   },
-  ...
+  ... # top_k results
 ]
-'''
-
+```
 
 ## Example Usage (Postman)
 - Set URL to http://localhost:8000/search
@@ -60,13 +86,13 @@ Array of search results:
 - Add header: Content-Type: application/json
 - In Body (raw, JSON), enter:
 
-'''yaml
+```yaml
 {
   "query": "artificial intelligence",
   "top_k": 5,
   "from_": 0
 }
-'''
+```
 - Send request
 
 ## Core Components
@@ -117,7 +143,14 @@ class SearchResult(BaseModel):
 
 ### `search(search_query: SearchQuery) -> List[SearchResult]`
 - Entry point for search requests
-- Implements Redis caching
+- Implements Redis caching using lazy loading (cache-aside)
+    - Write Operation
+        - When data is written or updated, the cache is updated first.
+        - Data Store Update: After updating the cache, the change is written to the data store.
+    - Read Operation: 
+        - When data is requested, it is first fetched from the cache. 
+        - If it’s not in the cache (a cache miss), the data is fetched from the data store and then stored in the cache for future requests.
+- Cache TTL defined to minimize space usage (3600s default) 
 - Calls `hybrid_search` if cache miss (request not stored in cache or made already)
 - Caching logic:
   ```python
@@ -130,18 +163,30 @@ class SearchResult(BaseModel):
   ```
 
 ### `hybrid_search(query: str, top_k: int = 10, from_: int = 0, keyword_weight: float = 0.7, vector_weight: float = 0.3, exact_match_boost: float = 2.0) -> List[SearchResult]`
-- Combines keyword and vector search results
-- Concurrent execution:
-  ```python
-  keyword_results, vector_results = await asyncio.gather(
-      keyword_search(query, top_k * 2, from_),
-      vector_search(query, top_k * 2, from_)
-  )
-  ```
-- Implements custom scoring logic, including term matching and exact match boosting
+- Purpose: Combines keyword search and vector search results to deliver a comprehensive set of search results based on both exact matches and semantic relevance.
+- Inputs:
+    - query (str): The search query string.
+    - top_k (int): Number of top results to return (default is 10).
+    - from_ (int): The starting index for the results (default is 0).
+    - keyword_weight (float): Weighting factor for keyword search results (default is 0.7).
+    - vector_weight (float): Weighting factor for vector search results (default is 0.3).
+    - exact_match_boost (float): Boost factor for exact matches (default is 2.0).
+- Functionality:
+    - Executes keyword and vector searches concurrently.
+    - Merges and scores results from both searches using weighted scoring.
+    - Applies additional boosts for exact matches in titles and content.
+- Returns: A list of SearchResult objects, sorted by the combined score of keyword and vector relevance.
 
 ### `keyword_search(query: str, top_k: int = 10, from_: int = 0) -> List[SearchResult]`
-- Elasticsearch query:
+- **Purpose:** Executes a keyword-based search for the magazine articles on Elasticsearch.
+- **Inputs:**
+  - `query` (str): The search query string.
+  - `top_k` (int): Number of top results to return (default is 10).
+  - `from_` (int): The starting index for the results (default is 0).
+- **Functionality:**
+  - Constructs an Elasticsearch query that matches the query string against multiple fields (`title`, `author`, `content`).
+  - Applies fuzziness and prefix length for more flexible matching.
+- **Elasticsearch Query:**
   ```python
   es_query = {
       "query": {
@@ -156,11 +201,18 @@ class SearchResult(BaseModel):
       },
       "highlight": { ... }
   }
-  ```
-- Executes search on `MAGAZINE_INFO_INDEX`
 
 ### `vector_search(query: str, top_k: int = 10, from_: int = 0) -> List[SearchResult]`
-- Generates query embedding: `query_vector = model.encode(query).tolist()`
+- Purpose: Performs a vector-based search using embeddings.
+- Inputs:
+    - query (str): The search query string.
+    - top_k (int): Number of top results to return (default is 10).
+    - from_ (int): The starting index for the results (default is 0).
+- Functionality:
+    - Generates an embedding for the query using a sentence transformer model.
+    - Constructs an Elasticsearch query to score documents based on cosine similarity between the query vector and stored document vectors.
+Generate Query Embedding: query_vector = model.encode(query).tolist()
+
 - Elasticsearch query:
   ```python
   es_query = {
@@ -188,13 +240,15 @@ class SearchResult(BaseModel):
   - `get_cached_results(cache_key: str) -> Optional[List[SearchResult]]`
     - Retrieves and deserializes cached results if they exist
 
-## Advanced Features (GPU/multi-node architecture)
-
-### Indexing Functions (commented out in current implementation)
-
+## Advanced Features (need to be activated for GPUs / multi-node architecture/ cloud)
+### Indexing Functions 
 #### `chunk_vector_search(query: str, top_k: int = 10, from_: int = 0) -> List[SearchResult]`
-- Performs vector search on document chunks
-- Uses nested query for searching within chunk vectors
+-Purpose: Searches within document chunks using vector embeddings.
+- Inputs:
+    - query (str): The search query string.
+    - top_k (int): Number of top results to return (default is 10).
+    - from_ (int): The starting index for the results (default is 0).
+- Functionality:Performs vector search on nested document chunks.
 - Elasticsearch query structure:
   ```python
   es_query = {
@@ -217,11 +271,28 @@ class SearchResult(BaseModel):
   ```
 
 #### `sentence_vector_search(query: str, top_k: int = 10, from_: int = 0) -> List[SearchResult]`
-- Performs vector search on individual sentences
-- Similar to `chunk_vector_search`, but uses `sentences` path in nested query
+- Purpose: Searches within individual sentences using vector embeddings.
+- Inputs:
+    - query (str): The search query string.
+    - top_k (int): Number of top results to return (default is 10).
+    - from_ (int): The starting index for the results (default is 0).
+- Functionality: Similar to chunk_vector_search, but operates on sentence-level vectors.
+
 
 ### `indexed_hybrid_search_rrf(query: str, top_k: int = 10, from_: int = 0, k: int = 60) -> List[SearchResult]`
-- Implements Reciprocal Rank Fusion for result combination
+- Purpose: 
+    - Combines multiple search methods using Reciprocal Rank Fusion (RRF) and indexed strategies.  
+    - Evaluates the search scores from multiple, previously ranked results to produce a unified result set. 
+- Inputs:
+    - query (str): The search query string.
+    - top_k (int): Number of top results to return (default is 10).
+    - from_ (int): The starting index for the results (default is 0).
+    - k (int): Parameter for RRF scoring (default is 60).
+- Functionality: 
+    - Executes keyword, vector, chunk, and sentence searches concurrently.
+    - Combines results using RRF to balance contributions from different search methods.
+-RRF Scoring: score = 1.0 / (k + rank)
+
 - Combines results from multiple search methods:
   ```python
   keyword_results, vector_results, chunk_results, sentence_results = await asyncio.gather(
@@ -236,8 +307,29 @@ class SearchResult(BaseModel):
 
 To utilize GPU/multi-node features:
 1. Configure Elasticsearch for GPU acceleration or distributed setup
+#### Local Setup
+```yaml
+PUT /my_index
+{
+  "settings": {
+    "number_of_shards": 1,
+    "number_of_replicas": 1
+  }
+}
+```
+
+#### Distributed (Multi-node Setup)
+```yaml
+PUT /my_index
+{
+  "settings": {
+    "number_of_shards": 3,  # Increase shards for better distribution and parallelism across nodes
+    "number_of_replicas": 2 # Increase of replicas for high availability and fault tolerance of nodes
+  }
+}
+``` 
 2. Implement and optimize indexing for chunk and sentence vectors
 3. Uncomment and adjust `indexed_hybrid_search_rrf` and related functions
 4. Replace `hybrid_search` call in `search` function with `indexed_hybrid_search_rrf`
-5. Fine-tune `k` parameter for RRF scoring based on performance requirements
+
 
