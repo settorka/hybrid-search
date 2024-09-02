@@ -7,7 +7,7 @@ This project implements an efficient hybrid search system designed for a large c
 Develop an efficient hybrid search system for a large collection of magazine articles by integrating traditional keyword-based search with advanced vector-based search methodologies. This system must handle and query approximately 1 million records efficiently, ensuring high scalability and responsiveness.
 Achieved
 - ~750 ms on first unique query on average, ~ 10 ms on next, with further reductions in response time using lazy loading in Redis
-- Handled 750,000 records efficiently on a single node cluster, budget, computational and time constraints.
+- Handled 750,000 records efficiently on a single node cluster; budget, computational and time constraints.
 - Implemented innovative hybrid search techniques to handle different types of queries relating to magazine articles
 
 
