@@ -16,8 +16,58 @@ docker-compose exec api python create_magazine_indices.py
 docker-compose exec api python create_mock_magazine_data.py
 docker-compose exec api python insert_magazine_data.py
 ```
-
 This sets up a Docker environment with FastAPI, Elasticsearch, and Redis containers, creates necessary indices, and populates them with mock data.
+
+## API Endpoint
+- Search Endpoint for hybrid search
+- URL: /search
+- Method: POST
+- Headers: Content-Type: application/json
+
+### Request Body
+'''yaml
+{
+  "query": "string",
+  "top_k": integer,
+  "from_": integer,
+  "category": "string (optional)"
+}
+'''
+### Response Body
+
+Array of search results:
+
+
+'''yaml
+[
+  {
+    "id": integer,
+    "title": "string",
+    "author": "string",
+    "content": "string",
+    "score": float,
+    "category": "string",
+    "updated_at": "string"
+  },
+  ...
+]
+'''
+
+
+## Example Usage (Postman)
+- Set URL to http://localhost:8000/search
+- Set method to POST
+- Add header: Content-Type: application/json
+- In Body (raw, JSON), enter:
+
+'''yaml
+{
+  "query": "artificial intelligence",
+  "top_k": 5,
+  "from_": 0
+}
+'''
+- Send request
 
 ## Core Components
 
@@ -68,7 +118,7 @@ class SearchResult(BaseModel):
 ### `search(search_query: SearchQuery) -> List[SearchResult]`
 - Entry point for search requests
 - Implements Redis caching
-- Calls `hybrid_search` if cache miss
+- Calls `hybrid_search` if cache miss (request not stored in cache or made already)
 - Caching logic:
   ```python
   cache_key = f"search:{query}:{top_k}:{from_}"
