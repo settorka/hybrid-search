@@ -7,6 +7,12 @@ The Magazine Search API is built using FastAPI and integrates with Elasticsearch
 After unzipping the project folder, you should see the following structure:
 ```sh
 hybrid-search/
+- api-tests
+  - distributed/ 
+    - load_test.py
+    - stress_test.py
+    - spike_test.py
+    - soak_test.py
 - Dockerfile
 - Readme.md
 - docker-compose.yml
@@ -40,10 +46,33 @@ hybrid-search/
 ```bash
 docker-compose up --build -d
 docker-compose exec api python create_magazine_indices.py
-docker-compose exec api python create_mock_magazine_data.py
+docker-compose exec api python create_mock_magazine_data.py #be mindful of storage requirements
 docker-compose exec api python insert_magazine_data.py
 ```
+
 This sets up a Docker environment with FastAPI, Elasticsearch, and Redis containers, creates necessary indices, and populates them with mock data.
+
+- Relevant Commands
+```sh
+  curl -X GET "localhost:9200/_cat/indices?v" # check indices present
+  # n records (n=5 here) from a db
+  curl -X GET "localhost:9200/magazine_info/_search?pretty" -H 'Content-Type: application/json' -d'
+  {
+    "size": 5,
+    "query": {
+      "match_all": {}
+    }
+  }' 
+
+  curl -X GET "localhost:9200/magazine_content/_search?pretty" -H 'Content-Type: application/json' -d'
+  {
+    "size": 5,
+    "query": {
+      "match_all": {}
+    }
+  }'
+
+```
 
 ## API Endpoint
 - Search Endpoint for hybrid search

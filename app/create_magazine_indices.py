@@ -23,7 +23,6 @@ INDEX_OPTIMIZATIONS = {
 # Data models
 MAGAZINE_INFO_INDEX = "magazine_info"
 MAGAZINE_INFO_MAPPINGS = {
-    "settings": INDEX_OPTIMIZATIONS,
     "properties": {
         "id": {"type": "integer"},
         "title": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
@@ -36,7 +35,6 @@ MAGAZINE_INFO_MAPPINGS = {
 
 MAGAZINE_CONTENT_INDEX = "magazine_content"
 MAGAZINE_CONTENT_MAPPINGS = {
-    "settings": INDEX_OPTIMIZATIONS,
     "properties": {
         "id": {"type": "integer"},
         "magazine_id": {"type": "integer"},
@@ -54,7 +52,6 @@ MAGAZINE_CONTENT_MAPPINGS = {
 }
 #production - multinode cluster / GPU
 # MAGAZINE_CONTENT_MAPPINGS = {
-#     "settings": INDEX_OPTIMIZATIONS,
 #     "properties": {
 #         "id": {"type": "integer"},
 #         "magazine_id": {"type": "integer"},
