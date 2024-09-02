@@ -164,16 +164,10 @@ Incrementally boosts scores based on the number of matched terms.
     - Enables horizontal scaling for handling larger datasets and higher query loads.
     - Designed to work with Elasticsearch clusters.
 
-
-
-Performance Metrics (Hypothetical)
-
-Average query time: ~100ms (cached), ~500ms (uncached)
-Indexing speed: ~1000 documents per second
-Cache hit ratio: ~70% (depends on query patterns)
-
 ## Areas for Future Optimization
-ity ity ittitiwwwwwwwnxnxnxnx- Adaptive Caching: Implement intelligent cache TTL based on query popularity.
+- Adaptive Caching: Implement intelligent cache TTL based on query popularity.
 - Distributed Vector Operations: Implement distributed vector search for improved scalability.
 - Real-time Index Updates: Develop a strategy for real-time or near-real-time index updates across distributed architecture
 
+Please see the API test doc for relevant query test cases. 
+For production tests in a testnet before deployment, review the distributed folder under api-tests for load, soak, stress and spike test (set up api in system design to handle traffic beforehand)

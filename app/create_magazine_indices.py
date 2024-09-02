@@ -1,11 +1,10 @@
-from elasticsearch_orm import ElasticsearchORM
+from elasticsearch_orm import ElasticsearchORM # interfacing with elasticsearch
 import os
 
 # Ensures environment variables are set
 os.environ.setdefault("ES_HOST", "elasticsearch")
 os.environ.setdefault("ES_PORT", "9200")
 os.environ.setdefault("ES_SCHEME", "http")
-
 
 # Initializes the predefined ElasticsearchORM
 es_orm = ElasticsearchORM()
@@ -96,16 +95,18 @@ MAGAZINE_CONTENT_MAPPINGS = {
 # }
 
 def create_magazine_info_index():
-    """Create the magazine info index with the specified mappings."""
+    """Create the magazine info index
+    with the specified mappings."""
     es_orm.create_index(MAGAZINE_INFO_INDEX, MAGAZINE_INFO_MAPPINGS)
 
 
 def create_magazine_content_index():
-    """Create the magazine content index with the specified mappings."""
+    """Create the magazine content index
+    with the specified mappings."""
     es_orm.create_index(MAGAZINE_CONTENT_INDEX, MAGAZINE_CONTENT_MAPPINGS)
 
-
 if __name__ == "__main__":
+    # Create both indices in elasticsearch db
     create_magazine_info_index()
     print(f"Index '{MAGAZINE_INFO_INDEX}' created successfully.")
     create_magazine_content_index()
