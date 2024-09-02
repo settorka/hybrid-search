@@ -1,16 +1,16 @@
 from elasticsearch_orm import ElasticsearchORM
 import os
 
-# Ensure environment variables are set
+# Ensures environment variables are set
 os.environ.setdefault("ES_HOST", "elasticsearch")
 os.environ.setdefault("ES_PORT", "9200")
 os.environ.setdefault("ES_SCHEME", "http")
 
 
-# Initialize ElasticsearchORM
+# Initializes the predefined ElasticsearchORM
 es_orm = ElasticsearchORM()
 
-# Define the custom analyzers with stemming and tokenization
+# Defines the index  analyzers with stemming and lowercase optimization
 INDEX_OPTIMIZATIONS = {
     "analyzer": {
         "standard_stem_analyzer": {
@@ -50,33 +50,50 @@ MAGAZINE_CONTENT_MAPPINGS = {
         "content_vector": {
             "type": "dense_vector",
             "dims": 384  # Dimensionality of the vector
-        },
-        # production - multinode cluster / GPU
-        # "chunks": {
-        #     "type": "nested",
-        #     "properties": {
-        #         "chunk_id": {"type": "integer"},
-        #         "chunk_content": {"type": "text"},
-        #         "chunk_vector": {
-        #             "type": "dense_vector",
-        #             "dims": 384
-        #         }
-        #     }
-        # },
-        # "sentences": {
-        #     "type": "nested",
-        #     "properties": {
-        #         "sentence_id": {"type": "integer"},
-        #         "sentence": {"type": "text"},
-        #         "sentence_vector": {
-        #             "type": "dense_vector",
-        #             "dims": 384
-        #         }
-        #     }
-        # }
+        }
     }
 }
-
+#production - multinode cluster / GPU
+# MAGAZINE_CONTENT_MAPPINGS = {
+#     "settings": INDEX_OPTIMIZATIONS,
+#     "properties": {
+#         "id": {"type": "integer"},
+#         "magazine_id": {"type": "integer"},
+#         "title": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+#         "author": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+#         "content": {"type": "text"},
+#         "summary": {"type": "text"},
+#         "category": {"type": "keyword"},
+#         "updated_at": {"type": "date"},
+#         "content_vector": {
+#             "type": "dense_vector",
+#             "dims": 384  # Dimensionality of the vector
+#         },
+#
+#         "chunks": {
+#             "type": "nested",
+#             "properties": {
+#                 "chunk_id": {"type": "integer"},
+#                 "chunk_content": {"type": "text"},
+#                 "chunk_vector": {
+#                     "type": "dense_vector",
+#                     "dims": 384
+#                 }
+#             }
+#         },
+#         "sentences": {
+#             "type": "nested",
+#             "properties": {
+#                 "sentence_id": {"type": "integer"},
+#                 "sentence": {"type": "text"},
+#                 "sentence_vector": {
+#                     "type": "dense_vector",
+#                     "dims": 384
+#                 }
+#             }
+#         }
+#     }
+# }
 
 def create_magazine_info_index():
     """Create the magazine info index with the specified mappings."""
