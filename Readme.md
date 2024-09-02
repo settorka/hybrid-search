@@ -201,6 +201,7 @@ class SearchResult(BaseModel):
       },
       "highlight": { ... }
   }
+- Executes search on `MAGAZINE_INFO_INDEX` macro for data model
 
 ### `vector_search(query: str, top_k: int = 10, from_: int = 0) -> List[SearchResult]`
 - Purpose: Performs a vector-based search using embeddings.
@@ -231,7 +232,6 @@ Generate Query Embedding: query_vector = model.encode(query).tolist()
 - Executes search on `MAGAZINE_CONTENT_INDEX`
 
 ## Caching Implementation
-
 - Uses Redis for caching search results
 - TTL defined by `CACHE_TTL` (default: 3600 seconds)
 - Caching functions:
