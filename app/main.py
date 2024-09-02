@@ -1,7 +1,7 @@
 import uvicorn
 import os
 import json, asyncio
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
 from pydantic import BaseModel, Field
 from elasticsearch import AsyncElasticsearch
 from typing import List, Optional
@@ -22,7 +22,7 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379")
 redis = aioredis.from_url(REDIS_URL, encoding="utf-8", decode_responses=True)
 
 # Sentence transformer model
-model = SentenceTransformer("all-MiniLM-L6-v2")
+# model = SentenceTransformer("all-MiniLM-L6-v2")
 
 MAGAZINE_INFO_INDEX = "magazine_info"
 MAGAZINE_CONTENT_INDEX = "magazine_content"
@@ -58,39 +58,8 @@ def extract_filters(query: str, category: Optional[str]):
     return filters, query
 
 async def get_embedding(text: str):
+    model = Request.app.state.model
     return model.encode(text).tolist()
-
-async def basic_search(query: str, top_k: int = 10, from_: int = 0):
-    try:
-        es_query = {
-            "size": top_k,
-            "from": from_,
-            "query": {
-                "multi_match": {
-                    "query": query,
-                    "fields": ["title", "author", "content"]
-                }
-            }
-        }
-        
-        response = await es.search(index="magazine_info", body=es_query)
-        
-        results = []
-        for hit in response['hits']['hits']:
-            results.append(SearchResult(
-                id=hit['_id'],
-                title=hit['_source'].get('title', ''),
-                author=hit['_source'].get('author', ''),
-                content=hit['_source'].get('content', '')[:200] + "...",  # Truncate content for preview
-                score=hit['_score'],
-                category=hit['_source'].get('category', ''),
-                updated_at=hit['_source'].get('updated_at', '')
-            ))
-        
-        return results
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Elasticsearch error: {str(e)}")
 
 async def keyword_search(query: str, top_k: int = 10, from_: int = 0):
     try:
@@ -139,6 +108,7 @@ async def keyword_search(query: str, top_k: int = 10, from_: int = 0):
 
 async def vector_search(query: str, top_k: int = 10, from_: int = 0):
     try:
+        model = Request.app.state.model
         # Generate embedding for the query
         query_vector = model.encode(query).tolist()
 
@@ -185,9 +155,6 @@ async def vector_search(query: str, top_k: int = 10, from_: int = 0):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Elasticsearch error: {str(e)}")
 
-def detect_phrase(query: str) -> bool:
-    """Detect if the query is a phrase (i.e., more than one word)."""
-    return len(query.split()) > 1
 async def hybrid_search(query: str, top_k: int = 10, from_: int = 0, keyword_weight: float = 0.7, vector_weight: float = 0.3, exact_match_boost: float = 2.0):
     """Perform a hybrid search by combining full-text and vector search 
     results with dynamic weighting and exact match boosting."""
@@ -384,23 +351,19 @@ async def search(search_query: SearchQuery):
     if cached_results:
         return cached_results
     
-    # results = await basic_search(query, top_k, from_)
     # results = await keyword_search(query, top_k, from_)
     # results = await vector_search(query, top_k, from_)
     results = await hybrid_search(query, top_k, from_)
-    # results = await hybrid_search_rrf(query, top_k, from_)
     # results = await indexed_hybrid_search_rrf(query, top_k, from_)   #multinode cluster
     # Cache the search results
     await cache_search_results(cache_key, results)
-    
     return results
 
 
 @app.on_event("startup")
 async def startup_event():
-    pass
-
-
+    app.state.model = SentenceTransformer("all-MiniLM-L6-v2")
+   
 @app.on_event("shutdown")
 async def shutdown_event():
     await es.close()
