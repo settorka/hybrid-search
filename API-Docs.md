@@ -50,7 +50,14 @@ docker-compose exec api python create_mock_magazine_data.py #be mindful of stora
 docker-compose exec api python insert_magazine_data.py
 ```
 
+
 This sets up a Docker environment with FastAPI, Elasticsearch, and Redis containers, creates necessary indices, and populates them with mock data.
+
+To shut down
+ ```bash
+docker-compose down # shuts down all services
+docker-compose down -v # shuts down all services and deletes persistent volume
+ ```
 
 - Relevant Commands
 ```sh
