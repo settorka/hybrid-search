@@ -4,8 +4,7 @@ import csv
 from elasticsearch_orm import ElasticsearchORM
 from create_magazine_indices import MAGAZINE_INFO_INDEX, MAGAZINE_CONTENT_INDEX
 from sentence_transformers import SentenceTransformer
-from sklearn.feature_extraction.text import TfidfVectorizer
-import numpy as np
+
 
 # Initialize ElasticsearchORM and SentenceTransformer
 es_orm = ElasticsearchORM()
@@ -97,7 +96,9 @@ def insert_mock_data(data):
 
         # Generate vector embedding for the content
         content_vector = model.encode(record["content"]).tolist()
-
+        
+        # indexing mappings;  for  GPU/multinode setup
+        
         # Generate chunks
         # chunks = chunk_content(record["content"])
         # chunk_data = []

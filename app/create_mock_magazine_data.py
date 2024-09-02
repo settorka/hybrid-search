@@ -2,7 +2,7 @@ import os
 from faker import Faker
 import csv
 import json
-
+import random
 fake = Faker()
 
 
@@ -17,13 +17,14 @@ def generate_mock_data(num_records, file_type):
 
     # Generate mock data for the given number of records
     for _ in range(num_records):
+        
         record = {
             "title": fake.sentence(nb_words=5),  # Generates a random title
             "author": fake.name(),               # Generates a random author name
             "publication_date": fake.date(),     # Generates a random publication date
             "category": fake.word(),             # Generates a random category
             # Generates random content
-            "content": fake.paragraph(nb_sentences=500)
+            "content": fake.paragraph(nb_sentences=random.randint(100,750)) # change this to handle different lengths
         }
         data.append(record)
 
