@@ -111,6 +111,7 @@
 - No trace IDs.
 - No metrics endpoint.
 - No latency histograms.
+- No OpenTelemetry hooks.
 - No cold/warm latency split.
 - No cache hit ratio metric.
 - No dependency latency metrics.
@@ -239,6 +240,8 @@
 - Emit zero-result rate.
 - Emit rate-limit count.
 - Emit timeout count.
+- Add OpenTelemetry hooks.
+- Do not require Jaeger.
 
 ### Required Correctness
 
@@ -293,6 +296,7 @@
 
 - GCP production deployment.
 - Terraform.
+- Jaeger.
 - Multi-region deployment.
 - Full microservice split.
 - Advanced autoscaling.
@@ -328,6 +332,7 @@
 - Add stronger abuse controls.
 - Add production dashboards.
 - Add production alerts.
+- Add Jaeger or managed tracing.
 - Add backup and restore.
 - Add indexed vector retrieval or justified equivalent.
 - Add load, stress, soak, and failure tests.

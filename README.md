@@ -38,8 +38,19 @@ This repository treats the original task as a versioned system-design exercise.
 ## Current Artifacts
 
 - [v0](./v0): original FastAPI, Elasticsearch, Redis, and SentenceTransformer implementation.
+- [v1](./v1): bounded production-aware implementation using FastAPI, `uv`, `.env`, local deterministic retrieval, metrics, OTel hooks, and tests.
 - [v1 README](./v1/README.md): refactored functional, non-functional, scale, lifecycle, and failure-aware contract.
 - [v1 look ahead](./v1/look%20ahead.md): version contract and v0 gap analysis.
+
+## v1 Local Commands
+
+```sh
+cd v1
+uv sync
+uv run pytest
+uv run ruff check src tests
+uv run uvicorn main:app --app-dir src --host 127.0.0.1 --port 8001
+```
 
 ## Non-Negotiable Rule
 
