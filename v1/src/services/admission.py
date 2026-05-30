@@ -48,6 +48,7 @@ class AdmissionController:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self._semaphore = asyncio.Semaphore(settings.max_concurrent_requests)
+        self._rate_lock = asyncio.Lock()
         self._client_windows: dict[str, deque[float]] = defaultdict(deque)
         self._global_window: deque[float] = deque()
 
@@ -57,7 +58,11 @@ class AdmissionController:
         content_length = request.headers.get("content-length")
         if content_length is None:
             return
-        if int(content_length) > self.settings.max_body_size_bytes:
+        try:
+            declared_size = int(content_length)
+        except ValueError as exc:
+            raise AdmissionError(ErrorCode.BAD_REQUEST, "invalid content-length") from exc
+        if declared_size > self.settings.max_body_size_bytes:
             raise AdmissionError(
                 ErrorCode.BAD_REQUEST,
                 "request body too large",
@@ -86,26 +91,31 @@ class AdmissionController:
                 {"max_offset": self.settings.max_offset},
             )
 
-    def check_rate(self, client_id: str) -> None:
+    async def check_rate(self, client_id: str) -> None:
         """Reject requests exceeding rate limits."""
 
-        now = time.monotonic()
-        self._prune(self._global_window, now)
-        self._prune(self._client_windows[client_id], now)
-        if len(self._global_window) >= self.settings.global_rate_per_minute:
-            raise AdmissionError(ErrorCode.RATE_LIMITED, "global rate limit exceeded")
-        if len(self._client_windows[client_id]) >= self.settings.per_client_rate_per_minute:
-            raise AdmissionError(ErrorCode.RATE_LIMITED, "client rate limit exceeded")
-        self._global_window.append(now)
-        self._client_windows[client_id].append(now)
+        async with self._rate_lock:
+            now = time.monotonic()
+            self._prune(self._global_window, now)
+            self._prune(self._client_windows[client_id], now)
+            if len(self._global_window) >= self.settings.global_rate_per_minute:
+                raise AdmissionError(ErrorCode.RATE_LIMITED, "global rate limit exceeded")
+            if len(self._client_windows[client_id]) >= self.settings.per_client_rate_per_minute:
+                raise AdmissionError(ErrorCode.RATE_LIMITED, "client rate limit exceeded")
+            self._global_window.append(now)
+            self._client_windows[client_id].append(now)
 
     async def run_bounded(self, operation: Callable[[], Awaitable[T]]) -> T:
         """Run an operation within concurrency bounds."""
 
-        if self._semaphore.locked() and self._semaphore._value <= 0:
-            raise AdmissionError(ErrorCode.OVERLOADED, "concurrency limit exceeded")
-        async with self._semaphore:
+        try:
+            await asyncio.wait_for(self._semaphore.acquire(), timeout=0.001)
+        except TimeoutError as exc:
+            raise AdmissionError(ErrorCode.OVERLOADED, "concurrency limit exceeded") from exc
+        try:
             return await operation()
+        finally:
+            self._semaphore.release()
 
     @staticmethod
     def _prune(window: deque[float], now: float) -> None:

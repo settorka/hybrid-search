@@ -8,12 +8,15 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "elasticsearch[async]>=8.17.0,<9.0.0",
     "fastapi>=0.115.0",
+    "faker>=33.0.0",
     "opentelemetry-api>=1.28.0",
     "opentelemetry-sdk>=1.28.0",
     "prometheus-client>=0.21.0",
     "pydantic>=2.10.0",
     "pydantic-settings>=2.6.0",
+    "redis>=5.2.0",
     "uvicorn[standard]>=0.32.0",
 ]
 

@@ -38,7 +38,7 @@ def create_search_router(
         try:
             admission.validate_body_size(request)
             admission.validate_payload(payload)
-            admission.check_rate(client_id)
+            await admission.check_rate(client_id)
             metrics.inflight_requests.inc()
             admitted = True
             started = time.perf_counter()

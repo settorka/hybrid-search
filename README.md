@@ -52,6 +52,15 @@ uv run ruff check src tests
 uv run uvicorn main:app --app-dir src --host 127.0.0.1 --port 8001
 ```
 
+For the real local dependency path:
+
+```sh
+cd v1/deployment
+docker compose up -d --build
+docker compose exec api uv run python scripts/ingest_faker.py --count 10000 --reset
+docker compose exec api uv run python scripts/smoke_performance.py --requests 25
+```
+
 ## Non-Negotiable Rule
 
 No version may claim a property it does not measure.

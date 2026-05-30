@@ -390,6 +390,13 @@ These are initial v1 bounds. If implementation cannot meet them, the bound must 
 - [ ] Run lint: `uv run ruff check src tests`
 - [ ] Start API: `uv run uvicorn main:app --app-dir src --host 127.0.0.1 --port 8001`
 
+### Local Compose Commands
+
+- [ ] Start dependencies and API: `cd deployment && docker compose up -d --build`
+- [ ] Ingest data: `docker compose exec api uv run python scripts/ingest_faker.py --count 10000 --reset`
+- [ ] Run performance smoke: `docker compose exec api uv run python scripts/smoke_performance.py --requests 25`
+- [ ] Stop stack: `docker compose down`
+
 ### Data Flow
 
 - [ ] Validate request.

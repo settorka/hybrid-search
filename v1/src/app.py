@@ -5,12 +5,18 @@ from fastapi.responses import JSONResponse
 from config import Settings, get_settings
 from controllers.health import create_health_router
 from controllers.search import create_search_router
+from helpers.body_limit import BodySizeLimitMiddleware
 from helpers.metrics import Metrics
+from helpers.tracing import configure_tracing
 from models import ErrorCode, ErrorResponse
 from services.admission import AdmissionController
 from services.cache import VersionedCache
+from services.cache_base import CacheAdapter
+from services.elasticsearch_repository import ElasticsearchMagazineRepository
 from services.health import HealthService
+from services.redis_cache import RedisCache
 from services.repository import InMemoryMagazineRepository
+from services.repository_base import MagazineRepository
 from services.search import HybridSearchService
 
 
@@ -18,14 +24,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     """Create the FastAPI application."""
 
     resolved_settings = settings or get_settings()
+    configure_tracing(resolved_settings)
     metrics = Metrics()
-    repository = InMemoryMagazineRepository(resolved_settings)
-    cache = VersionedCache(resolved_settings)
+    repository = _create_repository(resolved_settings)
+    cache = _create_cache(resolved_settings)
     admission = AdmissionController(resolved_settings)
     search_service = HybridSearchService(resolved_settings, repository, cache, metrics)
     health_service = HealthService(resolved_settings, repository, cache)
 
     app = FastAPI(title=resolved_settings.app_name, version=resolved_settings.api_version)
+    app.add_middleware(BodySizeLimitMiddleware, settings=resolved_settings)
     app.state.settings = resolved_settings
     app.state.metrics = metrics
     app.state.repository = repository
@@ -44,7 +52,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             request_id=request.headers.get("x-request-id", "unknown"),
             error=ErrorCode.BAD_REQUEST,
             message="request validation failed",
-            details={"errors": exc.errors()},
+            details={"errors": _sanitize_validation_errors(exc.errors())},
         )
         return JSONResponse(status_code=400, content=error.model_dump(mode="json"))
 
@@ -62,3 +70,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse(status_code=exc.status_code, content=error.model_dump(mode="json"))
 
     return app
+
+
+def _create_repository(settings: Settings) -> MagazineRepository:
+    """Create the configured repository adapter."""
+
+    if settings.search_backend == "elasticsearch":
+        return ElasticsearchMagazineRepository(settings)
+    return InMemoryMagazineRepository(settings)
+
+
+def _create_cache(settings: Settings) -> CacheAdapter:
+    """Create the configured cache adapter."""
+
+    if settings.cache_backend == "redis":
+        return RedisCache(settings)
+    return VersionedCache(settings)
+
+
+def _sanitize_validation_errors(errors: list[dict[str, object]]) -> list[dict[str, object]]:
+    """Remove raw input values from validation errors."""
+
+    sanitized: list[dict[str, object]] = []
+    for error in errors:
+        clean_error = dict(error)
+        clean_error.pop("input", None)
+        sanitized.append(clean_error)
+    return sanitized

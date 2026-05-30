@@ -24,6 +24,18 @@ def test_invalid_index_blocks_readiness(client: TestClient) -> None:
     assert response.json()["checks"]["index"] is False
 
 
+def test_cache_unavailable_does_not_block_readiness_by_default(client: TestClient) -> None:
+    """Cache is optional for v1 readiness."""
+
+    client.app.state.cache.available = False
+
+    response = client.get("/health/ready")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ready"
+    assert response.json()["checks"]["cache"] is True
+
+
 def test_metrics_expose_cache_and_no_raw_query(client: TestClient) -> None:
     """Metrics are observable without raw query labels."""
 

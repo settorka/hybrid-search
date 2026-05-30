@@ -1,3 +1,5 @@
+import asyncio
+
 from config import Settings
 from models import SearchRequest
 from services.cache import VersionedCache
@@ -24,8 +26,49 @@ def test_cache_key_includes_versions_and_filters() -> None:
 def test_repository_validates_active_model_version() -> None:
     """Repository validation catches model/version drift."""
 
-    settings = Settings(model_version="expected-model")
-    repository = InMemoryMagazineRepository(settings)
-    repository.documents[0].content.embedding_model_version = "other-model"
+    async def run() -> bool:
+        settings = Settings(model_version="expected-model")
+        repository = InMemoryMagazineRepository(settings)
+        repository.documents[0].content.embedding_model_version = "other-model"
+        return await repository.validate()
 
-    assert repository.validate() is False
+    assert asyncio.run(run()) is False
+
+
+def test_cache_evicts_at_configured_bound() -> None:
+    """Cache cardinality is bounded."""
+
+    settings = Settings(cache_max_entries=1)
+    cache = VersionedCache(settings)
+    first = SearchRequest(query="first")
+    second = SearchRequest(query="second")
+
+    first_key = cache.key_for(first)
+    second_key = cache.key_for(second)
+    assert asyncio.run(cache.set(first_key, response=None)) is False
+    assert asyncio.run(cache.set(second_key, response=None)) is True
+
+    assert list(cache.records.keys()) == [second_key]
+
+
+def test_invalid_settings_are_rejected() -> None:
+    """Invalid env-style settings fail construction."""
+
+    try:
+        Settings(embedding_dimension=0)
+    except ValueError as exc:
+        assert "embedding_dimension" in str(exc)
+    else:
+        raise AssertionError("expected invalid settings to fail")
+
+
+def test_repository_quarantines_bad_seed_record(tmp_path) -> None:
+    """Malformed seed records do not crash the repository."""
+
+    seed_file = tmp_path / "bad_seed.json"
+    seed_file.write_text('[{"id": 1, "title": "missing required fields"}]', encoding="utf-8")
+    repository = InMemoryMagazineRepository(Settings(seed_data_path=str(seed_file)))
+
+    assert asyncio.run(repository.all()) == ()
+    assert repository.quarantined_records
+    assert asyncio.run(repository.validate()) is False

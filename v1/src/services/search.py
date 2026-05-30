@@ -3,12 +3,12 @@ import time
 
 from config import Settings
 from helpers.metrics import Metrics
-from helpers.text import build_snippet, cosine_similarity, hash_embedding, tokenize
+from helpers.text import build_snippet, hash_embedding
 from helpers.tracing import span
 from models import ScoreBreakdown, SearchRequest, SearchResponse, SearchResult
 from services.admission import RequestContext
-from services.cache import VersionedCache
-from services.repository import InMemoryMagazineRepository
+from services.cache_base import CacheAdapter
+from services.repository_base import MagazineRepository
 
 
 class HybridSearchService:
@@ -17,8 +17,8 @@ class HybridSearchService:
     def __init__(
         self,
         settings: Settings,
-        repository: InMemoryMagazineRepository,
-        cache: VersionedCache,
+        repository: MagazineRepository,
+        cache: CacheAdapter,
         metrics: Metrics,
     ) -> None:
         self.settings = settings
@@ -31,7 +31,7 @@ class HybridSearchService:
 
         with span("search.request", top_k=request.top_k, offset=request.offset):
             cache_key = self.cache.key_for(request)
-            cached, degradation_reason = self._get_cached(cache_key)
+            cached, degradation_reason = await self._get_cached(cache_key)
             if cached is not None:
                 self.metrics.cache_total.labels(outcome="hit").inc()
                 return cached.model_copy(update={"request_id": context.request_id})
@@ -41,16 +41,16 @@ class HybridSearchService:
                 self._execute_uncached(request, context, degradation_reason),
                 timeout=context.remaining_seconds(),
             )
-            self._set_cached(cache_key, response)
+            await self._set_cached(cache_key, response)
             return response
 
-    def _get_cached(self, cache_key: str) -> tuple[SearchResponse | None, str | None]:
+    async def _get_cached(self, cache_key: str) -> tuple[SearchResponse | None, str | None]:
         """Read cache with degraded failure handling."""
 
         start = time.perf_counter()
         try:
-            result = self.cache.get(cache_key)
-        except ConnectionError:
+            result = await self.cache.get(cache_key)
+        except (ConnectionError, TimeoutError, OSError):
             self.metrics.degraded_total.labels(reason="cache_unavailable").inc()
             self.metrics.dependency_latency.labels(
                 dependency="cache", outcome="error"
@@ -61,12 +61,14 @@ class HybridSearchService:
         )
         return result, None
 
-    def _set_cached(self, cache_key: str, response: SearchResponse) -> None:
+    async def _set_cached(self, cache_key: str, response: SearchResponse) -> None:
         """Write cache with degraded failure handling."""
 
         try:
-            self.cache.set(cache_key, response)
-        except ConnectionError:
+            evicted = await self.cache.set(cache_key, response)
+            if evicted:
+                self.metrics.cache_evictions_total.labels(reason="max_entries").inc()
+        except (ConnectionError, TimeoutError, OSError):
             self.metrics.degraded_total.labels(reason="cache_unavailable").inc()
 
     async def _execute_uncached(
@@ -78,21 +80,13 @@ class HybridSearchService:
         """Run uncached keyword and vector retrieval."""
 
         with span("search.uncached"):
-            query_vector = await asyncio.wait_for(
-                asyncio.to_thread(self._embed_query, request.query),
-                timeout=self.settings.embedding_timeout_ms / 1000,
-            )
-            keyword_results, vector_results = await asyncio.gather(
-                asyncio.wait_for(
-                    asyncio.to_thread(self._keyword_search, request),
-                    timeout=self.settings.search_timeout_ms / 1000,
-                ),
-                asyncio.wait_for(
-                    asyncio.to_thread(self._vector_search, request, query_vector),
-                    timeout=self.settings.search_timeout_ms / 1000,
-                ),
-            )
-            results = self._fuse(request, keyword_results, vector_results)
+            query_vector = self._embed_query(request.query)
+            self._ensure_budget(context)
+            keyword_results = await self.repository.keyword_search(request, context)
+            self._ensure_budget(context)
+            vector_results = await self.repository.vector_search(request, query_vector, context)
+            self._ensure_budget(context)
+            results = await self._fuse(request, keyword_results, vector_results)
             if not results:
                 self.metrics.zero_results_total.inc()
             return SearchResponse(
@@ -111,51 +105,14 @@ class HybridSearchService:
         with span("embedding.query"):
             return hash_embedding(query, self.settings.embedding_dimension)
 
-    def _keyword_search(self, request: SearchRequest) -> dict[int, float]:
-        """Return bounded keyword candidates."""
+    @staticmethod
+    def _ensure_budget(context: RequestContext) -> None:
+        """Raise timeout when request budget is exhausted."""
 
-        with span("search.keyword"):
-            query_terms = tokenize(request.query)
-            scores: dict[int, float] = {}
-            for document in self.repository.all():
-                if request.category and document.magazine.category != request.category:
-                    continue
-                title_terms = tokenize(document.magazine.title)
-                author_terms = tokenize(document.magazine.author)
-                content_terms = tokenize(document.content.content)
-                score = 0.0
-                score += 3.0 * sum(term in title_terms for term in query_terms)
-                score += 2.0 * sum(term in author_terms for term in query_terms)
-                score += 1.0 * sum(term in content_terms for term in query_terms)
-                if score > 0:
-                    scores[document.magazine.id] = score
-            return dict(
-                sorted(scores.items(), key=lambda item: item[1], reverse=True)[
-                    : self.settings.max_keyword_candidates
-                ]
-            )
+        if context.remaining_seconds() <= 0.001:
+            raise TimeoutError("request deadline exceeded")
 
-    def _vector_search(self, request: SearchRequest, query_vector: list[float]) -> dict[int, float]:
-        """Return bounded vector candidates."""
-
-        with span("search.vector"):
-            scores: dict[int, float] = {}
-            for document in self.repository.all():
-                if request.category and document.magazine.category != request.category:
-                    continue
-                vector = document.content.vector_representation
-                if len(vector) != self.settings.embedding_dimension:
-                    continue
-                score = cosine_similarity(query_vector, vector)
-                if score > 0:
-                    scores[document.magazine.id] = score
-            return dict(
-                sorted(scores.items(), key=lambda item: item[1], reverse=True)[
-                    : self.settings.max_vector_candidates
-                ]
-            )
-
-    def _fuse(
+    async def _fuse(
         self,
         request: SearchRequest,
         keyword_scores: dict[int, float],
@@ -164,14 +121,16 @@ class HybridSearchService:
         """Fuse candidates into deterministic ranked results."""
 
         with span("search.fusion"):
-            documents = {document.magazine.id: document for document in self.repository.all()}
             candidate_ids = list(dict.fromkeys([*keyword_scores.keys(), *vector_scores.keys()]))[
                 : self.settings.max_fusion_candidates
             ]
+            documents = await self.repository.get_documents(candidate_ids)
             max_keyword = max(keyword_scores.values(), default=1.0)
             max_vector = max(vector_scores.values(), default=1.0)
             fused: list[SearchResult] = []
             for magazine_id in candidate_ids:
+                if magazine_id not in documents:
+                    continue
                 document = documents[magazine_id]
                 keyword_score = keyword_scores.get(magazine_id, 0.0) / max_keyword
                 vector_score = vector_scores.get(magazine_id, 0.0) / max_vector

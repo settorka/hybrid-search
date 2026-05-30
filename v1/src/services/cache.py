@@ -1,9 +1,11 @@
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
+from threading import RLock
 
 from config import Settings
-from helpers.text import normalize_query
-from models import SearchRequest, SearchResponse
+from models import SearchResponse
+from services.cache_base import CacheAdapter
 
 
 @dataclass
@@ -14,44 +16,62 @@ class CacheRecord:
     expires_at: float
 
 
-class VersionedCache:
+class VersionedCache(CacheAdapter):
     """Versioned in-memory cache with Redis-like failure semantics."""
 
     def __init__(self, settings: Settings) -> None:
-        self.settings = settings
-        self.records: dict[str, CacheRecord] = {}
-        self.available = True
+        super().__init__(settings)
+        self.records: OrderedDict[str, CacheRecord] = OrderedDict()
+        self._available = True
+        self._lock = RLock()
 
-    def key_for(self, request: SearchRequest) -> str:
-        """Build a version-safe cache key."""
+    @property
+    def available(self) -> bool:
+        """Return cache availability."""
 
-        normalized = normalize_query(request.query)
-        category = request.category or ""
-        return (
-            f"q={normalized}|top={request.top_k}|offset={request.offset}|category={category}"
-            f"|schema={self.settings.schema_version}|index={self.settings.index_version}"
-            f"|model={self.settings.model_version}"
-        )
+        with self._lock:
+            return self._available
 
-    def get(self, key: str) -> SearchResponse | None:
+    @available.setter
+    def available(self, value: bool) -> None:
+        """Set cache availability."""
+
+        with self._lock:
+            self._available = value
+
+    async def get(self, key: str) -> SearchResponse | None:
         """Return cached response when present and valid."""
 
-        if not self.available:
-            raise ConnectionError("cache unavailable")
-        record = self.records.get(key)
-        if record is None:
-            return None
-        if record.expires_at <= time.monotonic():
-            self.records.pop(key, None)
-            return None
-        return record.response
+        with self._lock:
+            if not self._available:
+                raise ConnectionError("cache unavailable")
+            record = self.records.get(key)
+            if record is None:
+                return None
+            if record.expires_at <= time.monotonic():
+                self.records.pop(key, None)
+                return None
+            self.records.move_to_end(key)
+            return record.response
 
-    def set(self, key: str, response: SearchResponse) -> None:
+    async def set(self, key: str, response: SearchResponse) -> bool:
         """Store cached response."""
 
-        if not self.available:
-            raise ConnectionError("cache unavailable")
-        self.records[key] = CacheRecord(
-            response=response,
-            expires_at=time.monotonic() + self.settings.cache_ttl_seconds,
-        )
+        with self._lock:
+            if not self._available:
+                raise ConnectionError("cache unavailable")
+            evicted = False
+            self.records[key] = CacheRecord(
+                response=response,
+                expires_at=time.monotonic() + self.settings.cache_ttl_seconds,
+            )
+            self.records.move_to_end(key)
+            while len(self.records) > self.settings.cache_max_entries:
+                self.records.popitem(last=False)
+                evicted = True
+            return evicted
+
+    async def is_available(self) -> bool:
+        """Return cache availability."""
+
+        return self.available

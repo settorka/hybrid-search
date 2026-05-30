@@ -3,13 +3,22 @@ from contextlib import contextmanager
 
 from opentelemetry import trace
 
-from config import get_settings
+from config import Settings
+
+_tracer_name = "hybrid_search_v1"
+
+
+def configure_tracing(settings: Settings) -> None:
+    """Configure tracing from runtime settings."""
+
+    global _tracer_name
+    _tracer_name = settings.tracer_name
 
 
 def get_tracer() -> trace.Tracer:
     """Return the package tracer."""
 
-    return trace.get_tracer(get_settings().tracer_name)
+    return trace.get_tracer(_tracer_name)
 
 
 @contextmanager

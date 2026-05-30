@@ -1,0 +1,51 @@
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: deployment/api/Dockerfile
+    env_file:
+      - ../.env
+    environment:
+      HYBRID_SEARCH_HOST: 0.0.0.0
+      HYBRID_SEARCH_PORT: 8001
+      HYBRID_SEARCH_SEARCH_BACKEND: elasticsearch
+      HYBRID_SEARCH_CACHE_BACKEND: redis
+      HYBRID_SEARCH_REDIS_URL: redis://redis:6379/0
+      HYBRID_SEARCH_ELASTICSEARCH_URL: http://elasticsearch:9200
+      HYBRID_SEARCH_CACHE_REQUIRED_FOR_READINESS: "true"
+    ports:
+      - "8001:8001"
+    depends_on:
+      redis:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms1g -Xmx1g"
+    ports:
+      - "9200:9200"
+    volumes:
+      - esdata:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=1s || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  esdata:

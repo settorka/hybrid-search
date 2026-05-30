@@ -14,13 +14,13 @@ def create_health_router(health: HealthService, metrics: Metrics) -> APIRouter:
     async def live() -> HealthResponse:
         """Return process liveness."""
 
-        return health.live()
+        return await health.live()
 
     @router.get("/health/ready", response_model=HealthResponse)
     async def ready(response: Response) -> HealthResponse:
         """Return strict readiness."""
 
-        result = health.ready()
+        result = await health.ready()
         if result.status != "ready":
             response.status_code = 503
         return result

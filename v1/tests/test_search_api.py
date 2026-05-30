@@ -60,6 +60,36 @@ def test_rejects_oversized_query(client: TestClient) -> None:
     assert response.json()["error"] == "bad_request"
 
 
+def test_rejects_oversized_body_before_route() -> None:
+    """Body limit is enforced before request handling."""
+
+    settings = Settings(max_body_size_bytes=20)
+    with TestClient(create_app(settings)) as local_client:
+        response = local_client.post(
+            "/search",
+            content=b'{"query":"' + (b"x" * 100) + b'"}',
+            headers={"content-type": "application/json", "x-request-id": "body-limit"},
+        )
+
+    assert response.status_code == 400
+    assert response.json()["request_id"] == "body-limit"
+    assert response.json()["error"] == "bad_request"
+
+
+def test_validation_error_does_not_echo_raw_input(client: TestClient) -> None:
+    """Validation errors do not leak raw user input."""
+
+    response = client.post(
+        "/search",
+        json={"query": "ok", "top_k": "SECRET_RAW_INPUT"},
+        headers={"x-request-id": "validation-redaction"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["request_id"] == "validation-redaction"
+    assert "SECRET_RAW_INPUT" not in response.text
+
+
 def test_rejects_invalid_top_k(client: TestClient) -> None:
     """User-controlled result count is bounded."""
 
@@ -82,6 +112,29 @@ def test_rate_limit_returns_429() -> None:
     assert second.json()["error"] == "rate_limited"
 
 
+def test_concurrent_rate_limit_is_enforced() -> None:
+    """Rate limits hold under concurrent pressure."""
+
+    async def run_requests() -> list[int]:
+        settings = Settings(per_client_rate_per_minute=3, global_rate_per_minute=3)
+        app = create_app(settings)
+
+        async def send_request() -> int:
+            from httpx import ASGITransport, AsyncClient
+
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post("/search", json={"query": "ai"})
+                return response.status_code
+
+        return await asyncio.gather(*(send_request() for _ in range(10)))
+
+    statuses = asyncio.run(run_requests())
+
+    assert statuses.count(200) <= 3
+    assert statuses.count(429) >= 7
+
+
 def test_cache_failure_is_visible_degradation(client: TestClient) -> None:
     """Cache failure is not silent."""
 
@@ -98,7 +151,12 @@ def test_cache_failure_is_visible_degradation(client: TestClient) -> None:
 def test_request_deadline_returns_timeout() -> None:
     """Request deadlines are enforced."""
 
-    settings = Settings(request_deadline_ms=20)
+    settings = Settings(
+        request_deadline_ms=20,
+        redis_timeout_ms=1,
+        search_timeout_ms=5,
+        embedding_timeout_ms=5,
+    )
     app = create_app(settings)
 
     async def slow_uncached(*_: object) -> object:

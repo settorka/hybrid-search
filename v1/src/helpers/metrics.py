@@ -36,6 +36,18 @@ class Metrics:
             ["reason"],
             registry=self.registry,
         )
+        self.cache_evictions_total = Counter(
+            "hybrid_search_cache_evictions_total",
+            "Cache evictions.",
+            ["reason"],
+            registry=self.registry,
+        )
+        self.invalid_vectors_total = Counter(
+            "hybrid_search_invalid_vectors_total",
+            "Invalid vectors encountered.",
+            ["reason"],
+            registry=self.registry,
+        )
         self.zero_results_total = Counter(
             "hybrid_search_zero_results_total",
             "Searches returning no results.",
