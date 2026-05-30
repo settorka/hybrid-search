@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.types import Lifespan
 
 from config import Settings, get_settings
 from controllers.health import create_health_router
@@ -32,7 +33,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     search_service = HybridSearchService(resolved_settings, repository, cache, metrics)
     health_service = HealthService(resolved_settings, repository, cache)
 
-    app = FastAPI(title=resolved_settings.app_name, version=resolved_settings.api_version)
+    async def lifespan(_: FastAPI) -> Lifespan:
+        """Manage application lifespan."""
+
+        yield
+        await cache.close()
+        await repository.close()
+
+    app = FastAPI(
+        title=resolved_settings.app_name,
+        version=resolved_settings.api_version,
+        lifespan=lifespan,
+    )
     app.add_middleware(BodySizeLimitMiddleware, settings=resolved_settings)
     app.state.settings = resolved_settings
     app.state.metrics = metrics
@@ -61,13 +73,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """Return deterministic HTTP errors."""
 
         if isinstance(exc.detail, dict) and "error" in exc.detail:
-            return JSONResponse(status_code=exc.status_code, content=exc.detail)
+            return JSONResponse(
+                status_code=exc.status_code,
+                content=exc.detail,
+                headers=exc.headers,
+            )
         error = ErrorResponse(
             request_id=request.headers.get("x-request-id", "unknown"),
             error=ErrorCode.SEARCH_FAILED,
             message=str(exc.detail),
         )
-        return JSONResponse(status_code=exc.status_code, content=error.model_dump(mode="json"))
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=error.model_dump(mode="json"),
+            headers=exc.headers,
+        )
 
     return app
 

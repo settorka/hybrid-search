@@ -59,6 +59,14 @@ def test_rejects_oversized_query(client: TestClient) -> None:
     assert response.status_code == 400
     assert response.json()["error"] == "bad_request"
 
+def test_rejects_too_many_query_tokens(client: TestClient) -> None:
+    """User-controlled query token count is bounded."""
+
+    response = client.post("/search", json={"query": "x " * 100})
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "bad_request"
+
 
 def test_rejects_oversized_body_before_route() -> None:
     """Body limit is enforced before request handling."""
@@ -71,7 +79,7 @@ def test_rejects_oversized_body_before_route() -> None:
             headers={"content-type": "application/json", "x-request-id": "body-limit"},
         )
 
-    assert response.status_code == 400
+    assert response.status_code == 413
     assert response.json()["request_id"] == "body-limit"
     assert response.json()["error"] == "bad_request"
 
@@ -110,6 +118,7 @@ def test_rate_limit_returns_429() -> None:
     assert first.status_code == 200
     assert second.status_code == 429
     assert second.json()["error"] == "rate_limited"
+    assert "retry-after" in {key.lower() for key in second.headers}
 
 
 def test_concurrent_rate_limit_is_enforced() -> None:

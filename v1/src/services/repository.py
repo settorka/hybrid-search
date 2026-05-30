@@ -117,6 +117,11 @@ class InMemoryMagazineRepository(MagazineRepository):
             if document.magazine.id in ids
         }
 
+    async def close(self) -> None:
+        """Release repository resources."""
+
+        return None
+
     @staticmethod
     def _ensure_budget(context: RequestContext) -> None:
         """Raise timeout when request budget is exhausted."""

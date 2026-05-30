@@ -7,6 +7,15 @@
 - `v2`: production-grade cloud system.
 - `v3`: business-mature search platform.
 
+## Latest Measured Results (Local Compose)
+
+- Dataset: `1,000,000` records, multi-paragraph content (`--paragraphs 8`).
+- Elasticsearch indices size (post-refresh): ~`1.4gb` total (`info ~157mb`, `content ~1.2gb`).
+- Benchmark notes:
+  - Admission/rate limiting is part of v1 bounded behavior; perf runs must report 429 rate-limit hits.
+  - A throttled single-client run (`--requests 50 --unique --sleep-ms 200`) produced 0 429s and p95 `7.916ms` (service-time).
+  - An under-throttled run produced many 429s (`rate_limited=890`, `failed=80` on `requests=200`); treat as expected bounded behavior, not a perf regression.
+
 ## v0 Finding
 
 `v0` proves feasibility only. It is not a production-aware system.

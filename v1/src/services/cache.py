@@ -75,3 +75,8 @@ class VersionedCache(CacheAdapter):
         """Return cache availability."""
 
         return self.available
+
+    async def close(self) -> None:
+        """Release cache resources."""
+
+        return None

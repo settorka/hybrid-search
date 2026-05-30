@@ -46,3 +46,8 @@ class RedisCache(CacheAdapter):
             )
         except (TimeoutError, OSError, ConnectionError):
             return False
+
+    async def close(self) -> None:
+        """Release Redis client resources."""
+
+        await self.client.aclose()

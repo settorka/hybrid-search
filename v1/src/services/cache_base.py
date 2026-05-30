@@ -33,3 +33,7 @@ class CacheAdapter(ABC):
     @abstractmethod
     async def is_available(self) -> bool:
         """Return cache availability."""
+
+    @abstractmethod
+    async def close(self) -> None:
+        """Release any underlying resources."""

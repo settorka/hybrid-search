@@ -28,7 +28,12 @@ def create_search_router(
         """Run bounded hybrid search."""
 
         request_id = request.headers.get("x-request-id", str(uuid4()))
-        client_id = request.client.host if request.client else "unknown"
+        if service.settings.trust_client_id_header:
+            client_id = request.headers.get("x-client-id") or (
+                request.client.host if request.client else "unknown"
+            )
+        else:
+            client_id = request.client.host if request.client else "unknown"
         context = RequestContext(
             request_id=request_id,
             client_id=client_id,
@@ -38,7 +43,9 @@ def create_search_router(
         try:
             admission.validate_body_size(request)
             admission.validate_payload(payload)
-            await admission.check_rate(client_id)
+            validated_client_id = admission.validate_client_id(client_id)
+            context.client_id = validated_client_id
+            await admission.check_rate(validated_client_id)
             metrics.inflight_requests.inc()
             admitted = True
             started = time.perf_counter()
@@ -47,7 +54,7 @@ def create_search_router(
                 return await service.search(payload, context)
 
             response = await asyncio.wait_for(
-                admission.run_bounded(operation),
+                admission.run_bounded(context, operation),
                 timeout=context.remaining_seconds(),
             )
             metrics.requests_total.labels(status="ok").inc()
@@ -57,14 +64,26 @@ def create_search_router(
             return response
         except AdmissionError as exc:
             metrics.requests_total.labels(status=exc.code.value).inc()
+            headers: dict[str, str] = {}
             if exc.code == ErrorCode.RATE_LIMITED:
                 metrics.rate_limited_total.labels(scope="client_or_global").inc()
                 status_code = 429
+                if service.settings.retry_after_seconds > 0:
+                    headers["retry-after"] = str(service.settings.retry_after_seconds)
             elif exc.code == ErrorCode.OVERLOADED:
                 status_code = 429
+                if service.settings.retry_after_seconds > 0:
+                    headers["retry-after"] = str(service.settings.retry_after_seconds)
             else:
                 status_code = 400
-            raise _http_error(status_code, request_id, exc.code, exc.message, exc.details) from exc
+            raise _http_error(
+                status_code,
+                request_id,
+                exc.code,
+                exc.message,
+                exc.details,
+                headers=headers,
+            ) from exc
         except TimeoutError as exc:
             metrics.timeouts_total.labels(component="request").inc()
             metrics.requests_total.labels(status=ErrorCode.TIMEOUT.value).inc()
@@ -87,6 +106,7 @@ def _http_error(
     code: ErrorCode,
     message: str,
     details: dict[str, object] | None = None,
+    headers: dict[str, str] | None = None,
 ) -> HTTPException:
     """Build deterministic HTTP errors."""
 
@@ -98,4 +118,5 @@ def _http_error(
             message=message,
             details=details or {},
         ).model_dump(mode="json"),
+        headers=headers,
     )

@@ -37,7 +37,7 @@ class BodySizeLimitMiddleware:
                 await self._send_error(send, request_id, "invalid content-length")
                 return
             if declared_size > self.settings.max_body_size_bytes:
-                await self._send_error(send, request_id, "request body too large")
+                await self._send_error(send, request_id, "request body too large", status=413)
                 return
 
         received = 0
@@ -49,6 +49,7 @@ class BodySizeLimitMiddleware:
                 received += len(message.get("body", b""))
                 if received > self.settings.max_body_size_bytes:
                     await self._drain(receive)
+                    await self._send_error(send, request_id, "request body too large", status=413)
                     return {"type": "http.disconnect"}
             return message
 
@@ -63,7 +64,14 @@ class BodySizeLimitMiddleware:
             if message["type"] != "http.request" or not message.get("more_body", False):
                 return
 
-    async def _send_error(self, send: Send, request_id: str, message: str) -> None:
+    async def _send_error(
+        self,
+        send: Send,
+        request_id: str,
+        message: str,
+        *,
+        status: int = 400,
+    ) -> None:
         """Send deterministic body limit error."""
 
         payload = {
@@ -76,7 +84,7 @@ class BodySizeLimitMiddleware:
         await send(
             {
                 "type": "http.response.start",
-                "status": 400,
+                "status": status,
                 "headers": [(b"content-type", b"application/json")],
             }
         )

@@ -105,9 +105,12 @@ class ElasticsearchMagazineRepository(MagazineRepository):
 
         if not magazine_ids:
             return {}
-        response = await self.client.mget(
-            index=self.settings.magazine_content_index,
-            ids=[str(magazine_id) for magazine_id in magazine_ids],
+        response = await asyncio.wait_for(
+            self.client.mget(
+                index=self.settings.magazine_content_index,
+                ids=[str(magazine_id) for magazine_id in magazine_ids],
+            ),
+            timeout=self.settings.search_timeout_ms / 1000,
         )
         documents: dict[int, IndexedMagazine] = {}
         for item in response["docs"]:
@@ -131,6 +134,11 @@ class ElasticsearchMagazineRepository(MagazineRepository):
             )
             documents[magazine.id] = IndexedMagazine(magazine=magazine, content=content)
         return documents
+
+    async def close(self) -> None:
+        """Release Elasticsearch client resources."""
+
+        await self.client.close()
 
     @staticmethod
     def _filters(request: SearchRequest) -> list[dict[str, object]]:

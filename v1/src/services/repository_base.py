@@ -38,3 +38,7 @@ class MagazineRepository(ABC):
     @abstractmethod
     async def get_documents(self, magazine_ids: list[int]) -> dict[int, IndexedMagazine]:
         """Return documents by magazine id."""
+
+    @abstractmethod
+    async def close(self) -> None:
+        """Release any underlying resources."""
