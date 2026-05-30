@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+elasticsearch[async]
+aioredis
+sentence-transformers
+pydantic
+faker 
+asyncio
+numpy
+scikit-learn
