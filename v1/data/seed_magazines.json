@@ -1,0 +1,50 @@
+[
+  {
+    "id": 1,
+    "title": "AI Systems For Clinical Triage",
+    "author": "Ada Morgan",
+    "publication_date": "2026-01-10",
+    "category": "technology",
+    "content": "Artificial intelligence systems help clinical teams triage patients safely."
+  },
+  {
+    "id": 2,
+    "title": "Mountain Rail Journeys",
+    "author": "Theo Clarke",
+    "publication_date": "2025-11-04",
+    "category": "travel",
+    "content": "Slow rail journeys through mountain villages reveal quiet travel culture."
+  },
+  {
+    "id": 3,
+    "title": "Summer Linen And Modern Tailoring",
+    "author": "Maya Stone",
+    "publication_date": "2025-07-22",
+    "category": "fashion",
+    "content": "Designers return to linen tailoring for warm weather city wardrobes."
+  },
+  {
+    "id": 4,
+    "title": "Open Source Databases At Scale",
+    "author": "Lin Patel",
+    "publication_date": "2026-02-18",
+    "category": "technology",
+    "content": "Search databases combine indexing, caching, vectors, and operational discipline."
+  },
+  {
+    "id": 5,
+    "title": "Independent Coffee Roasters",
+    "author": "Nora Wells",
+    "publication_date": "2024-09-12",
+    "category": "food",
+    "content": "Small coffee roasters build loyal communities through sourcing and craft."
+  },
+  {
+    "id": 6,
+    "title": "Urban Gardens And Climate Resilience",
+    "author": "Iris Hughes",
+    "publication_date": "2026-03-30",
+    "category": "environment",
+    "content": "City gardens reduce heat, absorb rain, and improve neighborhood resilience."
+  }
+]

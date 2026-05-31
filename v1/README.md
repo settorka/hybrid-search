@@ -201,6 +201,7 @@ These are initial v1 bounds. If implementation cannot meet them, the bound must 
 - [ ] v1 shall use `uv`.
 - [ ] v1 shall use `pyproject.toml`.
 - [ ] v1 shall use `uv.lock`.
+- [ ] v1 shall use `.env` for runtime configuration.
 - [ ] v1 shall pin maintained modern library versions.
 - [ ] v1 shall define supported Python version.
 - [ ] v1 shall run from clean checkout.
@@ -216,6 +217,7 @@ These are initial v1 bounds. If implementation cannot meet them, the bound must 
 - [ ] No Terraform.
 - [ ] No Kubernetes.
 - [ ] No managed cloud search service.
+- [ ] No Jaeger.
 - [ ] No multi-region deployment.
 - [ ] No production CI/CD pipeline.
 - [ ] No service mesh.
@@ -272,8 +274,9 @@ These are initial v1 bounds. If implementation cannot meet them, the bound must 
   - [ ] Logs contain error category.
   - [ ] Metrics expose latency.
   - [ ] Metrics expose cache hit ratio.
-  - [ ] Metrics expose dependency failures.
-  - [ ] Metrics do not expose raw query strings as labels.
+- [ ] Metrics expose dependency failures.
+- [ ] Metrics do not expose raw query strings as labels.
+  - [ ] OpenTelemetry trace context is emitted when tracing is enabled.
 
 - [ ] Relevance tests
   - [ ] Golden query set exists.
@@ -379,6 +382,20 @@ These are initial v1 bounds. If implementation cannot meet them, the bound must 
 - [ ] `GET /metrics`
   - [ ] Exposes operational metrics.
   - [ ] Does not expose raw query text.
+
+### Local Commands
+
+- [ ] Install dependencies: `uv sync`
+- [ ] Run tests: `uv run pytest`
+- [ ] Run lint: `uv run ruff check src tests`
+- [ ] Start API: `uv run uvicorn main:app --app-dir src --host 127.0.0.1 --port 8001`
+
+### Local Compose Commands
+
+- [ ] Start dependencies and API: `cd deployment && docker compose up -d --build`
+- [ ] Ingest data: `docker compose exec api uv run python scripts/ingest_faker.py --count 10000 --reset`
+- [ ] Run performance smoke: `docker compose exec api uv run python scripts/smoke_performance.py --requests 25`
+- [ ] Stop stack: `docker compose down`
 
 ### Data Flow
 
@@ -589,6 +606,7 @@ flowchart LR
 - [ ] Search backend boundary satisfies dependency timeout and indexed retrieval constraints.
 - [ ] Bounded fusion satisfies memory and latency constraints.
 - [ ] Observability satisfies visibility guarantees.
+- [ ] OpenTelemetry hooks satisfy v1 tracing needs without requiring Jaeger.
 - [ ] Scope guard prevents v2 infrastructure from entering v1.
 
 ### NFR Design Obligations
@@ -613,12 +631,14 @@ flowchart LR
 
 - [ ] Observability
   - [ ] Request logs.
+  - [ ] OpenTelemetry trace hooks.
   - [ ] Dependency metrics.
   - [ ] Latency histograms.
   - [ ] Error categories.
   - [ ] Relevance evaluation report.
   - [ ] Bounded-cardinality metric labels.
   - [ ] Redacted query logging.
+  - [ ] Tracing exporter failure never affects request success.
 
 - [ ] Operational safety
   - [ ] Runbooks.
@@ -630,6 +650,7 @@ flowchart LR
 - [ ] v2 scope guard
   - [ ] Reject Terraform in v1.
   - [ ] Reject GCP deployment in v1.
+  - [ ] Reject Jaeger in v1.
   - [ ] Reject managed cloud services in v1.
   - [ ] Reject microservice split unless required by measured v1 envelope failure.
   - [ ] Record all deferred items in `v1/look ahead.md`.
@@ -637,3 +658,39 @@ flowchart LR
 ## v1 Acceptance Rule
 
 v1 is accepted only when every implemented claim has a test, a metric, or a documented bound.
+
+## v1 Risk Register (Non-Exhaustive)
+
+v1 is local-only and production-aware, not production-secure. These are the remaining sharp edges and their mitigations.
+
+- `x-client-id` trust boundary: default is untrusted and ignored unless `HYBRID_SEARCH_TRUST_CLIENT_ID_HEADER=true`.
+- Slowloris / slow-body uploads: mitigated by body byte cap; requires server-level read/keepalive timeouts in deployment config.
+- Process-local admission/rate limiting: bounded per instance; multi-instance correctness requires shared admission (v2).
+- Elasticsearch worst-case query behavior: bounded by query token/length caps, candidate caps, and dependency timeouts; still susceptible to expensive queries within bounds.
+- Relevance quality: v1 uses deterministic hash embeddings; semantic relevance is out of scope for v1 and must not be claimed without evaluation.
+
+## Measured Results (Local Compose)
+
+This section is append-only for v1. If numbers regress, record both and explain why.
+
+Dataset:
+
+- Ingest: `1,000,000` magazines, multi-paragraph content (`--paragraphs 8`).
+- Indices: `magazine_info_v1` + `magazine_content_v1`.
+
+Elasticsearch storage (reported by `_cat/indices` after refresh):
+
+- `magazine_info_v1`: ~`157.4mb` for `1,000,000` docs.
+- `magazine_content_v1`: ~`1.2gb` for `1,000,000` docs (includes indexed `dense_vector`).
+- Total ES indices: ~`1.4gb`.
+
+Benchmark (single-client sequential requests; this is not a load test):
+
+- Unique queries with explicit throttle (`--requests 50 --unique --sleep-ms 200`):
+  - `ok=50`, `rate_limited=0`, `failed=0`
+  - p50: `6.385ms`, p95: `7.916ms`, max: `8.817ms`
+  - observed throughput (request service-time only): `171.293 req/s`
+- Unique queries without sufficient throttle (`--requests 200 --unique --sleep-ms 5 --max-retries 10`):
+  - `ok=120`, `rate_limited=890`, `failed=80`
+  - p50 (ok only): `10.823ms`, p95 (ok only): `29.614ms`, max: `63.092ms`
+  - admission is intentionally bounded; 429s are expected beyond configured limits.
