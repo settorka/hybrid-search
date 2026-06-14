@@ -11,14 +11,15 @@ class CacheAdapter(ABC):
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
-    def key_for(self, request: SearchRequest) -> str:
+    def key_for(self, request: SearchRequest, index_version: str | None = None) -> str:
         """Build a version-safe cache key."""
 
         normalized = normalize_query(request.query)
         category = request.category or ""
+        active_index_version = index_version or self.settings.index_version
         return (
             f"q={normalized}|top={request.top_k}|offset={request.offset}|category={category}"
-            f"|schema={self.settings.schema_version}|index={self.settings.index_version}"
+            f"|schema={self.settings.schema_version}|index={active_index_version}"
             f"|model={self.settings.model_version}"
         )
 

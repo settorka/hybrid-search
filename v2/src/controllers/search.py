@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Request
 from helpers.metrics import Metrics
 from models import ErrorCode, ErrorResponse, SearchRequest, SearchResponse
 from services.admission import AdmissionController, AdmissionError, RequestContext
+from services.index_lifecycle import RequestState
 from services.search import HybridSearchService
 
 
@@ -28,6 +29,7 @@ def create_search_router(
         """Run bounded hybrid search."""
 
         request_id = request.headers.get("x-request-id", str(uuid4()))
+        metrics.request_state_total.labels(state=RequestState.RECEIVED.value).inc()
         if service.settings.trust_client_id_header:
             client_id = request.headers.get("x-client-id") or (
                 request.client.host if request.client else "unknown"
@@ -63,6 +65,7 @@ def create_search_router(
             )
             return response
         except AdmissionError as exc:
+            metrics.request_state_total.labels(state=RequestState.REJECTED.value).inc()
             metrics.requests_total.labels(status=exc.code.value).inc()
             headers: dict[str, str] = {}
             if exc.code == ErrorCode.RATE_LIMITED:
@@ -85,6 +88,7 @@ def create_search_router(
                 headers=headers,
             ) from exc
         except TimeoutError as exc:
+            metrics.request_state_total.labels(state=RequestState.FAILED.value).inc()
             metrics.timeouts_total.labels(component="request").inc()
             metrics.requests_total.labels(status=ErrorCode.TIMEOUT.value).inc()
             raise _http_error(

@@ -63,6 +63,17 @@ def test_invalid_settings_are_rejected() -> None:
         raise AssertionError("expected invalid settings to fail")
 
 
+def test_observability_budget_cannot_exceed_monthly_budget() -> None:
+    """Cost settings preserve the v2 budget envelope."""
+
+    try:
+        make_settings(monthly_budget_gbp=100, observability_budget_gbp=101)
+    except ValueError as exc:
+        assert "observability budget" in str(exc)
+    else:
+        raise AssertionError("expected invalid budget settings to fail")
+
+
 def test_repository_quarantines_bad_seed_record(tmp_path) -> None:
     """Malformed seed records do not crash the repository."""
 

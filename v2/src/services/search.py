@@ -8,6 +8,7 @@ from helpers.tracing import span
 from models import ScoreBreakdown, SearchRequest, SearchResponse, SearchResult
 from services.admission import RequestContext
 from services.cache_base import CacheAdapter
+from services.index_lifecycle import IndexLifecycleService, RequestState
 from services.repository_base import MagazineRepository
 
 
@@ -20,17 +21,21 @@ class HybridSearchService:
         repository: MagazineRepository,
         cache: CacheAdapter,
         metrics: Metrics,
+        lifecycle: IndexLifecycleService,
     ) -> None:
         self.settings = settings
         self.repository = repository
         self.cache = cache
         self.metrics = metrics
+        self.lifecycle = lifecycle
 
     async def search(self, request: SearchRequest, context: RequestContext) -> SearchResponse:
         """Run bounded hybrid search."""
 
         with span("search.request", top_k=request.top_k, offset=request.offset):
-            cache_key = self.cache.key_for(request)
+            active_index_version = self.lifecycle.active_version
+            self.metrics.request_state_total.labels(state=RequestState.CACHE.value).inc()
+            cache_key = self.cache.key_for(request, active_index_version)
             cached, degradation_reason = await self._get_cached(cache_key)
             if cached is not None:
                 self.metrics.cache_total.labels(outcome="hit").inc()
@@ -82,18 +87,23 @@ class HybridSearchService:
         with span("search.uncached"):
             query_vector = self._embed_query(request.query)
             self._ensure_budget(context)
+            self.metrics.request_state_total.labels(state=RequestState.RETRIEVE_KEYWORD.value).inc()
             keyword_results = await self.repository.keyword_search(request, context)
             self._ensure_budget(context)
+            self.metrics.request_state_total.labels(state=RequestState.RETRIEVE_VECTOR.value).inc()
             vector_results = await self.repository.vector_search(request, query_vector, context)
             self._ensure_budget(context)
+            self.metrics.request_state_total.labels(state=RequestState.FUSE.value).inc()
             results = await self._fuse(request, keyword_results, vector_results)
             if not results:
                 self.metrics.zero_results_total.inc()
+            active_index_version = self.lifecycle.active_version
+            self.metrics.request_state_total.labels(state=RequestState.RESPOND.value).inc()
             return SearchResponse(
                 request_id=context.request_id,
                 degraded=degradation_reason is not None,
                 degradation_reason=degradation_reason,
-                index_version=self.settings.index_version,
+                index_version=active_index_version,
                 schema_version=self.settings.schema_version,
                 model_version=self.settings.model_version,
                 results=results[request.offset : request.offset + request.top_k],
@@ -148,7 +158,7 @@ class HybridSearchService:
                             vector_score=round(vector_score, 6),
                             fused_score=round(fused_score, 6),
                         ),
-                        index_version=self.settings.index_version,
+                        index_version=self.lifecycle.active_version,
                         model_version=self.settings.model_version,
                     )
                 )

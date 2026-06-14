@@ -214,6 +214,22 @@ resource "google_cloud_run_v2_service" "api" {
         value = "120"
       }
       env {
+        name  = "HYBRID_SEARCH_CUTOVER_HOUR"
+        value = "23"
+      }
+      env {
+        name  = "HYBRID_SEARCH_CUTOVER_MINUTE"
+        value = "0"
+      }
+      env {
+        name  = "HYBRID_SEARCH_MONTHLY_BUDGET_GBP"
+        value = tostring(var.monthly_budget_gbp)
+      }
+      env {
+        name  = "HYBRID_SEARCH_OBSERVABILITY_BUDGET_GBP"
+        value = "20"
+      }
+      env {
         name  = "HYBRID_SEARCH_CACHE_TTL_SECONDS"
         value = "300"
       }

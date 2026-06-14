@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     retry_after_seconds: int = Field(default=1, ge=0, le=3600)
     trust_client_id_header: bool = Field(default=False)
     max_query_tokens: int = Field(default=48, ge=1, le=512)
+    cutover_hour: int = Field(default=23, ge=0, le=23)
+    cutover_minute: int = Field(default=0, ge=0, le=59)
+    monthly_budget_gbp: int = Field(default=100, ge=1, le=10_000)
+    observability_budget_gbp: int = Field(default=20, ge=0, le=10_000)
     cache_ttl_seconds: int = Field(ge=1, le=86_400)
     cache_max_entries: int = Field(ge=1, le=1_000_000)
     cache_required_for_readiness: bool
@@ -74,6 +78,8 @@ class Settings(BaseSettings):
             raise ValueError("per-client rate cannot exceed global rate")
         if self.elasticsearch_num_candidates < self.max_vector_candidates:
             raise ValueError("elasticsearch num_candidates must cover vector candidate limit")
+        if self.observability_budget_gbp > self.monthly_budget_gbp:
+            raise ValueError("observability budget cannot exceed monthly budget")
         return self
 
 

@@ -36,6 +36,36 @@ class Metrics:
             ["reason"],
             registry=self.registry,
         )
+        self.request_state_total = Counter(
+            "hybrid_search_request_state_total",
+            "Request state machine transitions.",
+            ["state"],
+            registry=self.registry,
+        )
+        self.index_lifecycle_transition_total = Counter(
+            "hybrid_search_index_lifecycle_transition_total",
+            "Index lifecycle transitions.",
+            ["state"],
+            registry=self.registry,
+        )
+        self.cutover_total = Counter(
+            "hybrid_search_cutover_total",
+            "Index cutover outcomes.",
+            ["outcome"],
+            registry=self.registry,
+        )
+        self.rollback_total = Counter(
+            "hybrid_search_rollback_total",
+            "Index rollback outcomes.",
+            ["outcome"],
+            registry=self.registry,
+        )
+        self.rollout_gate = Gauge(
+            "hybrid_search_rollout_gate",
+            "Rollout gate state, 1 for pass and 0 for fail.",
+            ["gate"],
+            registry=self.registry,
+        )
         self.cache_evictions_total = Counter(
             "hybrid_search_cache_evictions_total",
             "Cache evictions.",

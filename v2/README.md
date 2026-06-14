@@ -205,6 +205,7 @@
 - `GET /health/live`
 - `GET /health/ready`
 - `GET /metrics`
+- `GET /rollout/status`
 
 #### Search request
 - body: `query`, `top_k`, `offset`, `category`
@@ -219,6 +220,13 @@
 - `413`: body too large
 - `429`: rate limited or overloaded
 - `504`: deadline exceeded
+
+#### Operational hooks
+- `GET /rollout/status`: read-only rollout gate state for deployment automation.
+- `scripts/index_rollout.py verify --index <concrete-index>`: verifies mappings, vector dimensions, and non-zero document count.
+- `scripts/index_rollout.py cutover --index <concrete-index>`: atomically moves the active Elasticsearch alias during the `23:00` cutover window.
+- `scripts/index_rollout.py rollback --index <previous-index>`: atomically restores the previous alias target.
+- Runtime lifecycle service: `IndexLifecycleService` keeps active, previous, cutover, and rollback state inside the API process.
 
 ### Architecture
 - Why: compress the live dependency graph into one view.
@@ -307,6 +315,39 @@ stateDiagram-v2
   FUSE --> FAILED
 ```
 
+- Implemented in: `services.index_lifecycle.RequestState`.
+- Telemetry: `hybrid_search_request_state_total{state}`.
+- Terminal rule: each request reaches `respond`, `rejected`, or `failed`.
+
+#### Index Lifecycle State Machine
+- Why: make active alias, cutover, and rollback explicit.
+
+```mermaid
+stateDiagram-v2
+  [*] --> ABSENT
+  ABSENT --> CREATING
+  CREATING --> LOADING
+  LOADING --> VERIFYING
+  VERIFYING --> READY
+  READY --> ACTIVATING
+  ACTIVATING --> ACTIVE
+  ACTIVE --> DEPRECATED
+  DEPRECATED --> DELETING
+  DELETING --> ABSENT
+  CREATING --> FAILED
+  LOADING --> FAILED
+  VERIFYING --> FAILED
+  ACTIVATING --> FAILED
+  FAILED --> ROLLED_BACK
+  ROLLED_BACK --> ACTIVE
+```
+
+- Implemented in: `services.index_lifecycle.IndexLifecycleService`.
+- Cutover rule: target version must be `READY`; activation must occur at configured `cutover_hour:cutover_minute` unless forced for drills.
+- Rollback rule: previous active version is restored in one lifecycle operation.
+- Read rule: search response and cache namespace use `IndexLifecycleService.active_version`.
+- Telemetry: `hybrid_search_index_lifecycle_transition_total{state}`, `hybrid_search_cutover_total{outcome}`, `hybrid_search_rollback_total{outcome}`.
+
 ## Deep Dives To Satisfy NFR
 - Why: tie the design to production behavior and economics.
 
@@ -318,6 +359,8 @@ stateDiagram-v2
 - Log line size: `<= 4 KiB`.
 - Raw query exposure: `0` by default.
 - Required identifiers: `request_id`, `index_version`, `schema_version`, `model_version`, `degradation_reason` when degraded.
+- State metrics: request state, index lifecycle transitions, cutover, rollback, rollout gates.
+- Rollout hook: `/rollout/status` exports bounded pass/fail gates and updates `hybrid_search_rollout_gate{gate}`.
 
 ### Math
 - Why: state the load/capacity model behind the limits.
@@ -334,3 +377,13 @@ stateDiagram-v2
 - Cost thresholds: compute within monthly budget; storage within monthly budget; tracing `<= 20%` of monthly budget; logs bounded; egress bounded.
 - Decision rule: keep a component only if measured benefit > measured cost.
 - Cost model: fixed cost; per-query cost; per-doc storage cost; rollback cost.
+
+### Implementation Mapping
+- Why: keep the code wired to this contract.
+- Request state machine: `src/services/index_lifecycle.py`, `src/controllers/search.py`, `src/services/search.py`.
+- Index lifecycle, cutover, rollback: `src/services/index_lifecycle.py`.
+- Rollout gates: `src/services/rollout.py`, `src/controllers/rollout.py`.
+- Elasticsearch alias hooks: `scripts/index_rollout.py`.
+- Active-version cache safety: `src/services/cache_base.py`.
+- Telemetry: `src/helpers/metrics.py`.
+- GCP Terraform: `deployment/cloud/gcp/`.

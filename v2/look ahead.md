@@ -46,7 +46,7 @@
 - `src/`: carry forward bounded request handling and version safety.
 - `tests/`: extend with cutover, telemetry, and rollout tests.
 - `deployment/`: add Terraform, GCP, scaling, and rollout machinery.
-- `scripts/`: add seed, reindex, cutover, and cost probes.
+- `scripts/`: add seed, reindex, cutover, rollback, and cost probes.
 - `.env` / `.env.example`: parameterize all bounds and instance sizing.
 
 ## State Machines
@@ -85,7 +85,20 @@ stateDiagram-v2
   VERIFYING --> FAILED
   ACTIVATING --> FAILED
   FAILED --> ROLLED_BACK
+  ROLLED_BACK --> ACTIVE
 ```
+
+## Implemented Hooks
+- Why: tie the v2 contract to executable surfaces.
+- Request state telemetry: `hybrid_search_request_state_total{state}`.
+- Index lifecycle telemetry: `hybrid_search_index_lifecycle_transition_total{state}`.
+- Cutover telemetry: `hybrid_search_cutover_total{outcome}`.
+- Rollback telemetry: `hybrid_search_rollback_total{outcome}`.
+- Rollout gate telemetry: `hybrid_search_rollout_gate{gate}`.
+- Read-only rollout hook: `GET /rollout/status`.
+- Alias rollout script: `scripts/index_rollout.py verify|cutover|rollback`.
+- Active read version: `IndexLifecycleService.active_version`.
+- Version-safe cache namespace: cache keys bind to schema, model, and active index version.
 
 ## Acceptance
 - Why: v2 claims must be measurable.
@@ -95,3 +108,4 @@ stateDiagram-v2
 - rollback drill executed once.
 - cutover executed once at `23:00`.
 - telemetry volume bounded.
+- rollout gates pass via `/rollout/status`.

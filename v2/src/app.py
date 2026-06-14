@@ -5,6 +5,7 @@ from starlette.types import Lifespan
 
 from config import Settings, get_settings
 from controllers.health import create_health_router
+from controllers.rollout import create_rollout_router
 from controllers.search import create_search_router
 from helpers.body_limit import BodySizeLimitMiddleware
 from helpers.metrics import Metrics
@@ -15,9 +16,11 @@ from services.cache import VersionedCache
 from services.cache_base import CacheAdapter
 from services.elasticsearch_repository import ElasticsearchMagazineRepository
 from services.health import HealthService
+from services.index_lifecycle import IndexLifecycleService
 from services.redis_cache import RedisCache
 from services.repository import InMemoryMagazineRepository
 from services.repository_base import MagazineRepository
+from services.rollout import RolloutService
 from services.search import HybridSearchService
 
 
@@ -29,9 +32,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     metrics = Metrics()
     repository = _create_repository(resolved_settings)
     cache = _create_cache(resolved_settings)
+    lifecycle = IndexLifecycleService(resolved_settings, metrics)
     admission = AdmissionController(resolved_settings)
-    search_service = HybridSearchService(resolved_settings, repository, cache, metrics)
-    health_service = HealthService(resolved_settings, repository, cache)
+    search_service = HybridSearchService(resolved_settings, repository, cache, metrics, lifecycle)
+    health_service = HealthService(resolved_settings, repository, cache, lifecycle)
+    rollout_service = RolloutService(resolved_settings, repository, cache, lifecycle)
 
     async def lifespan(_: FastAPI) -> Lifespan:
         """Manage application lifespan."""
@@ -50,11 +55,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.metrics = metrics
     app.state.repository = repository
     app.state.cache = cache
+    app.state.lifecycle = lifecycle
     app.state.admission = admission
     app.state.search_service = search_service
     app.state.health_service = health_service
+    app.state.rollout_service = rollout_service
     app.include_router(create_search_router(admission, search_service, metrics))
     app.include_router(create_health_router(health_service, metrics))
+    app.include_router(create_rollout_router(rollout_service, metrics))
 
     @app.exception_handler(RequestValidationError)
     async def validation_handler(request: Request, exc: RequestValidationError) -> JSONResponse:

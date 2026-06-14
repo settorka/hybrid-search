@@ -10,7 +10,9 @@ Compose runs the API with Redis and Elasticsearch so request bounds, cache degra
 cd v2/deployment
 docker compose up -d --build
 docker compose exec api uv run python scripts/ingest_faker.py --count 10000 --reset
+docker compose exec api uv run python scripts/index_rollout.py verify --index magazine_content_v2
 curl http://127.0.0.1:8002/health/ready
+curl http://127.0.0.1:8002/rollout/status
 curl -X POST http://127.0.0.1:8002/search \
   -H 'Content-Type: application/json' \
   -d '{"query":"technology search databases vectors","top_k":10}'
@@ -52,6 +54,8 @@ docker compose exec api uv run python scripts/ingest_faker.py \
   --seed 42 \
   --reset \
   --refresh-interval -1
+docker compose exec api uv run python scripts/index_rollout.py verify --index magazine_content_v2
+curl http://127.0.0.1:8002/rollout/status
 docker compose exec api uv run python scripts/smoke_performance.py \
   --base-url http://127.0.0.1:8002 \
   --requests 50 \
