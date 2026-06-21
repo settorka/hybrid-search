@@ -1,0 +1,107 @@
+from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram, generate_latest
+
+
+class Metrics:
+    """Prometheus metrics with bounded labels."""
+
+    def __init__(self) -> None:
+        self.registry = CollectorRegistry()
+        self.requests_total = Counter(
+            "hybrid_search_requests_total",
+            "Total product requests.",
+            ["status"],
+            registry=self.registry,
+        )
+        self.request_latency = Histogram(
+            "hybrid_search_request_latency_seconds",
+            "Product request latency.",
+            ["path", "outcome"],
+            registry=self.registry,
+        )
+        self.cache_total = Counter(
+            "hybrid_search_cache_total",
+            "Cache outcomes.",
+            ["outcome"],
+            registry=self.registry,
+        )
+        self.dependency_latency = Histogram(
+            "hybrid_search_dependency_latency_seconds",
+            "Dependency latency.",
+            ["dependency", "outcome"],
+            registry=self.registry,
+        )
+        self.degraded_total = Counter(
+            "hybrid_search_degraded_total",
+            "Degraded responses.",
+            ["reason"],
+            registry=self.registry,
+        )
+        self.request_state_total = Counter(
+            "hybrid_search_request_state_total",
+            "Request state machine transitions.",
+            ["state"],
+            registry=self.registry,
+        )
+        self.index_lifecycle_transition_total = Counter(
+            "hybrid_search_index_lifecycle_transition_total",
+            "Index lifecycle transitions.",
+            ["state"],
+            registry=self.registry,
+        )
+        self.cutover_total = Counter(
+            "hybrid_search_cutover_total",
+            "Index cutover outcomes.",
+            ["outcome"],
+            registry=self.registry,
+        )
+        self.rollback_total = Counter(
+            "hybrid_search_rollback_total",
+            "Index rollback outcomes.",
+            ["outcome"],
+            registry=self.registry,
+        )
+        self.rollout_gate = Gauge(
+            "hybrid_search_rollout_gate",
+            "Rollout gate state, 1 for pass and 0 for fail.",
+            ["gate"],
+            registry=self.registry,
+        )
+        self.cache_evictions_total = Counter(
+            "hybrid_search_cache_evictions_total",
+            "Cache evictions.",
+            ["reason"],
+            registry=self.registry,
+        )
+        self.invalid_vectors_total = Counter(
+            "hybrid_search_invalid_vectors_total",
+            "Invalid vectors encountered.",
+            ["reason"],
+            registry=self.registry,
+        )
+        self.zero_results_total = Counter(
+            "hybrid_search_zero_results_total",
+            "Searches returning no results.",
+            registry=self.registry,
+        )
+        self.rate_limited_total = Counter(
+            "hybrid_search_rate_limited_total",
+            "Rate limited requests.",
+            ["scope"],
+            registry=self.registry,
+        )
+        self.timeouts_total = Counter(
+            "hybrid_search_timeouts_total",
+            "Timeouts by component.",
+            ["component"],
+            registry=self.registry,
+        )
+        self.inflight_requests = Gauge(
+            "hybrid_search_inflight_requests",
+            "Current in-flight product requests.",
+            registry=self.registry,
+        )
+
+    def render(self) -> bytes:
+        """Render metrics in Prometheus format."""
+
+        return generate_latest(self.registry)
