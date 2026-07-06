@@ -28,7 +28,7 @@ The original task required:
 
 ## Refactor Direction
 
-This repository treats the original task as a versioned system-design exercise.
+This repository treats the original task as a versioned system-design.
 
 - `v0`: take-home prototype; proves feasibility.
 - `v1`: production-aware contract; bounds operational and economic risk.
