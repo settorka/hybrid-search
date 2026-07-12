@@ -15,6 +15,12 @@ htmlcov/
 .venv/
 venv/
 
+# Local environment files
+.env
+.env.*
+!.env.example
+!.env.*.example
+
 # Local generated mock data
 mock_data.csv
 mock_data.json

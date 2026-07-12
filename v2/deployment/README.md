@@ -66,6 +66,8 @@ terraform plan \
 
 For GitHub Actions deployments, Terraform state is stored in GCS. Create the state bucket before the first workflow run and configure these repository values:
 
+Use `.env.gcp.example` as the setup checklist for project IDs, Workload Identity Federation, GitHub variables, GitHub secrets, and optional Terraform capacity overrides.
+
 Variables:
 
 - `GCP_PROJECT_ID`
