@@ -9,6 +9,7 @@ __pycache__/
 .ruff_cache/
 .coverage
 htmlcov/
+.DS_Store
 
 # Virtual environments
 .venv/

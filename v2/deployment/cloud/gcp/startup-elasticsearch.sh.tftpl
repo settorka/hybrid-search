@@ -1,0 +1,41 @@
+#!/bin/bash
+set -euxo pipefail
+
+sysctl -w vm.max_map_count=262144
+cat >/etc/sysctl.d/99-elasticsearch.conf <<'EOF'
+vm.max_map_count=262144
+EOF
+
+apt-get update
+apt-get install -y docker.io
+systemctl enable --now docker
+
+mkdir -p /etc/elasticsearch /var/lib/elasticsearch/data
+chown -R 1000:1000 /var/lib/elasticsearch
+
+cat >/etc/elasticsearch/elasticsearch.yml <<EOF
+cluster.name: ${cluster_name}
+node.name: ${node_name}
+network.host: 0.0.0.0
+http.port: 9200
+transport.port: 9300
+discovery.seed_hosts: ${jsonencode([for ip in node_ips : "${ip}:9300"])}
+cluster.initial_master_nodes: ${jsonencode(node_names)}
+xpack.security.enabled: false
+xpack.security.enrollment.enabled: false
+path.data: /usr/share/elasticsearch/data
+EOF
+
+docker rm -f elasticsearch || true
+docker pull ${elasticsearch_image}
+docker run \
+  --name elasticsearch \
+  --restart unless-stopped \
+  --memory ${elasticsearch_memory} \
+  --ulimit memlock=-1:-1 \
+  -p 9200:9200 \
+  -p 9300:9300 \
+  -e ES_JAVA_OPTS="-Xms${elasticsearch_heap} -Xmx${elasticsearch_heap}" \
+  -v /etc/elasticsearch/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml:ro \
+  -v /var/lib/elasticsearch/data:/usr/share/elasticsearch/data \
+  ${elasticsearch_image}
